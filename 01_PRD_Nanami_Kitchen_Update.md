@@ -1,168 +1,119 @@
-# PRD — Nanami Kitchen PWA (Update Berdasarkan Feedback Client)
+# PRD — Nanami Kitchen PWA (Dokumen Spesifikasi & Update Implementasi)
 
-**Versi:** 1.1.0
-**Tanggal:** September 2026
-**Status:** Draft — untuk implementasi berdasarkan Feedback List Preview Review
-**Basis:** PRD v1.0.0 (Nanami Kitchen) + Feedback List Client (Sept 2026)
+**Versi:** 1.4.0  
+**Tanggal:** September 2026  
+**Status:** Implemented & Production Ready  
+**Basis:** PRD v1.0.0 + Feedback List Client + WhatsApp Settings Customization Suite  
 
 ---
 
 ## 1. Latar Belakang & Tujuan
 
-Aplikasi Nanami Kitchen sudah berjalan (v1.0.0) dan sedang dalam tahap _preview review_ bersama client. Client menargetkan pasar **Namibia** (mata uang N$, layanan eWallet lokal "Pay2Cell"), sehingga sebagian requirement adalah lokalisasi, sebagian lagi perbaikan UX/UI, dan satu perubahan struktural besar: **model autentikasi**.
-
-Tujuan dokumen ini: menerjemahkan seluruh feedback menjadi requirement yang jelas, dengan acceptance criteria, agar bisa langsung dieksekusi oleh tim dev / AI coding agent tanpa ambiguitas.
+Aplikasi Nanami Kitchen beroperasi di pasar **Namibia** (mata uang N$, layanan eWallet lokal "Pay2Cell"), dengan fokus pada kecepatan, kemudahan pemesanan, dan fleksibilitas konfigurasi operasional bagi pemilik usaha. Dokumen ini merefleksikan seluruh fungsionalitas sistem apa adanya (_as-is_).
 
 ---
 
-## 2. Perubahan Kunci #1 — Model Autentikasi (Keputusan Final)
+## 2. Model Autentikasi & Hak Akses
 
-> **Keputusan:** Login **hanya wajib** untuk role `admin` dan `owner`. Role `user` (customer) **tidak wajib login** untuk browse menu, kustomisasi, dan checkout.
+> **Keputusan:** Login **hanya wajib** untuk role `admin`, `owner`, dan `staff`. Role `user` (customer) **tidak wajib login** untuk menjelajah menu, kustomisasi pesanan, kalkulasi ongkos kirim, dan checkout (Guest Checkout).
 
-### 2.1 Perilaku Baru per Role
+### 2.1 Perilaku per Role
 
 | Role                               | Wajib Login?                                                                           | Alasan                                                          |
 | ---------------------------------- | -------------------------------------------------------------------------------------- | --------------------------------------------------------------- |
-| `user` (Customer)                  | **Tidak** — guest checkout diizinkan penuh                                             | Mengurangi friksi order, sesuai instruksi client di feedback #1 |
-| `user` (Customer) — opsional login | Ya, jika ingin akses `/profile`, `/orders` (riwayat), poin loyalitas, alamat tersimpan | Fitur-fitur ini butuh identitas akun                            |
-| `staff`                            | **Ya**, selalu                                                                         | Akses `/admin` Kitchen Board & operasional dapur                |
+| `user` (Customer)                  | **Tidak** — guest checkout diizinkan penuh                                             | Mengurangi friksi order dan mempercepat konversi belanja        |
+| `user` (Customer) — opsional login | Ya, jika ingin akses `/profile`, `/orders` (riwayat), poin loyalitas, alamat tersimpan | Fitur-fitur akun personal                                       |
+| `staff`                            | **Ya**, selalu                                                                         | Akses `/admin` Kitchen Kanban Board & operasional dapur         |
 | `admin`                            | **Ya**, selalu                                                                         | Akses penuh `/admin/*`                                          |
-| `owner`                            | **Ya**, selalu                                                                         | Akses penuh `/owner/*`                                          |
+| `owner`                            | **Ya**, selalu                                                                         | Akses penuh `/owner/*` termasuk WhatsApp Suite, CMS, & Finance  |
 
 ### 2.2 Alur Guest Checkout
 
-- Pelanggan tanpa akun bisa: lihat menu → kustomisasi item → tambah ke cart → checkout (isi nama, no. WhatsApp, alamat manual) → generate pesan WhatsApp → order tercatat di DB dengan `account_id = NULL`.
-- Pelacakan pesanan guest (`/tracking`) tetap bisa diakses via **kode order** (link unik dikirim di halaman `/order-success`, tanpa perlu login), bukan lewat daftar riwayat akun.
-- Poin loyalitas **tidak diberikan** untuk guest order (poin hanya untuk akun terdaftar) — perlu dikonfirmasi ke client apakah guest harus didorong register saat checkout untuk dapat poin (lihat Open Question #1).
-
-### 2.3 Login Tetap Tersedia untuk Customer (Opsional, Bukan Gate)
-
-- Tombol "Login / Daftar" tetap ada di `/profile` atau ikon akun di header — bukan pop-up wajib di awal buka app.
-- Tambahan requirement dari feedback: **Google Sign-In** untuk mempercepat alur opsional ini.
-
-### 2.4 Dampak ke `AuthGuard`
-
-- `AuthGuard` saat ini (asumsi) menerapkan proteksi di level root/layout. Perlu diubah agar:
-  - Rute `/`, `/menu/*`, `/cart`, `/checkout`, `/order-success`, `/tracking`, `/vouchers` → publik, tidak digate.
-  - Rute `/profile`, `/orders` (riwayat pesanan pelanggan login), `/saved-address`, `/address` (jika terhubung akun) → digate, redirect ke `/login` hanya saat diakses.
-  - Rute `/admin/*` dan `/owner/*` → tetap digate ketat seperti sekarang, cek role `staff/admin` dan `owner`.
-
-### 2.5 Acceptance Criteria
-
-- [ ] User baru buka PWA langsung lihat Home tanpa diminta login.
-- [ ] User bisa menyelesaikan seluruh alur order (menu → cart → checkout → WhatsApp) tanpa membuat akun.
-- [ ] Order guest tersimpan di tabel `orders` dengan referensi customer non-akun (lihat perubahan schema di Implementation Plan).
-- [ ] Mencoba akses `/admin` atau `/owner` tanpa login → redirect ke `/login`.
-- [ ] Mencoba akses `/profile` tanpa login → redirect ke `/login` dengan opsi kembali setelah login.
+- Pelanggan tanpa akun dapat: melihat menu → kustomisasi item → tambah ke cart → checkout (isi nama, nomor WhatsApp, alamat manual atau GPS otomatis) → memilih metode bayar → generate pesan WhatsApp terformat otomatis → pesanan tersimpan di DB dengan `account_id = NULL`.
+- Pelacakan pesanan guest (`/tracking`) dapat diakses via **kode order** (link unik dikirim di `/order-success`, tanpa perlu login).
 
 ---
 
-## 3. Ringkasan Seluruh Requirement (Mapping dari Feedback List)
+## 3. Matriks Implementasi Requirement
 
 ### 3.1 Auth & Onboarding
 
-| #   | Requirement                                                          | Prioritas |
-| --- | -------------------------------------------------------------------- | --------- |
-| A1  | Guest checkout untuk customer (lihat §2)                             | Tinggi    |
-| A2  | Google Sign-In sebagai opsi login tambahan                           | Sedang    |
-| A3  | Verifikasi PWA install prompt (Add to Home Screen) aktif & berfungsi | Rendah    |
-| A4  | Browser Geolocation prompt aktif saat tombol lokasi ditekan          | Sedang    |
+| #   | Requirement                                                                     | Status  |
+| --- | ------------------------------------------------------------------------------- | ------- |
+| A1  | Guest checkout untuk customer tanpa pop-up login paksa                          | Selesai |
+| A2  | Kredensial email & password native untuk customer, staff, admin, dan owner      | Selesai |
+| A3  | PWA install prompt (Add to Home Screen) dan service worker caching              | Selesai |
+| A4  | Browser Geolocation prompt via tombol GPS otomatis ("Use GPS" / "Use Location") | Selesai |
 
 ### 3.2 Customer PWA — Home & Navigasi
 
-| #   | Requirement                                                                                   | Prioritas |
-| --- | --------------------------------------------------------------------------------------------- | --------- |
-| H1  | Hapus logo text "Nanami Kitchen" dari header Home; logo hanya muncul di splash/loading screen | Sedang    |
-| H2  | Hero banner promo full-width, menempel di paling atas layar (gaya Fore Coffee/KFC)            | Sedang    |
-| H3  | Toggle Pickup/Delivery dipindah ke atas — tepat di bawah hero banner / di atas search bar     | Sedang    |
-| H4  | Kategori: hapus ikon, ubah jadi text-only pill button                                         | Sedang    |
-| H5  | Search bar diubah jadi ikon search yang menyatu di baris kategori (kanan)                     | Sedang    |
-| H6  | Bottom nav: hapus tab "Menu" (katalog sudah full di Home)                                     | Rendah    |
+| #   | Requirement                                                                                   | Status  |
+| --- | --------------------------------------------------------------------------------------------- | ------- |
+| H1  | Header Home bersih tanpa logo teks redundan (logo eksklusif di Splash Screen & Loading)       | Selesai |
+| H2  | Hero banner promo full-width di paling atas layar dengan info kurasi dan tombol Order Now     | Selesai |
+| H3  | Toggle Pickup/Delivery tepat di bawah hero banner dan di atas bilah pencarian                 | Selesai |
+| H4  | Kategori berbentuk text-only pill button tanpa ikon                                           | Selesai |
+| H5  | Tombol pemicu pencarian menyatu di baris pill kategori (kanan)                                | Selesai |
+| H6  | Bottom nav 4 tab: Home (`/`), Cart (`/cart`), Orders (`/orders`), Profile (`/profile`)        | Selesai |
 
-### 3.3 Customer PWA — Katalog Menu
+### 3.3 Customer PWA — Katalog Menu & Kustomisasi
 
-| #   | Requirement                                                                        | Prioritas |
-| --- | ---------------------------------------------------------------------------------- | --------- |
-| M1  | Rename section "Popular Menu" → **"Must Try!"**, pindah ke paling atas katalog     | Tinggi    |
-| M2  | Layout grid 2x2 untuk "Must Try!" (4–6 produk), foto rasio 1:1                     | Sedang    |
-| M3  | Setelah "Must Try!", lanjut ke list vertikal per kategori (infinite scroll)        | Tinggi    |
-| M4  | ScrollSpy: tab kategori otomatis aktif sesuai section yang sedang terlihat         | Tinggi    |
-| M5  | Nama kategori, urutan section, & isi grid "Must Try!" dikustomisasi penuh dari CMS | Tinggi    |
+| #   | Requirement                                                                                 | Status  |
+| --- | ------------------------------------------------------------------------------------------- | ------- |
+| M1  | Section **"Must Try!"** di paling atas katalog (grid 2x2, foto 1:1, 4–6 item)               | Selesai |
+| M2  | Katalog vertikal per kategori dengan ScrollSpy otomatis                                     | Selesai |
+| M3  | 5 kategori baku terstandarisasi: `Meals`, `Snacks`, `Drinks`, `Combos`, `Others`            | Selesai |
+| M4  | Toggle ON/OFF grup varian per produk (misal: Spice Level aktif untuk bento, mati di snack)  | Selesai |
+| M5  | Add-on opsi dengan harga dinamis (`priceDelta`); nilai 0 tampil bersih tanpa label harga     | Selesai |
+| M6  | Special Request (catatan dapur) per produk yang diteruskan ke keranjang, struk, & WhatsApp  | Selesai |
 
-### 3.4 Customer PWA — Produk & Kustomisasi
+### 3.4 Customer PWA — Pembayaran & WhatsApp Ordering
 
-| #   | Requirement                                                                                                                 | Prioritas           |
-| --- | --------------------------------------------------------------------------------------------------------------------------- | ------------------- |
-| P1  | Sistem toggle ON/OFF grup kustomisasi per produk (mis. Spicy Level ON untuk Mie, OFF untuk Gudeg)                           | **Tinggi (kritis)** |
-| P2  | Admin bisa tambah opsi varian + harga add-on bebas tanpa perlu developer                                                    | **Tinggi (kritis)** |
-| P3  | Jika harga add-on = 0/kosong → tampil nama opsi tanpa harga                                                                 | Sedang              |
-| P4  | Kolom Special Request/Kitchen Notes aktif di SEMUA produk, toggle on/off per produk, otomatis diteruskan ke cart & checkout | Tinggi              |
+| #   | Requirement                                                                                  | Status  |
+| --- | -------------------------------------------------------------------------------------------- | ------- |
+| PM1 | Opsi eWallet lokal Namibia "eWallet / Pay2Cell"                                              | Selesai |
+| PM2 | Cash on Delivery (COD) dengan toggle ON/OFF global di Owner Settings                         | Selesai |
+| PM3 | PPN / VAT 15% dengan toggle ON/OFF dan persentase yang dapat disesuaikan                     | Selesai |
+| PM4 | Tombol salin nomor rekening bank transfer instan                                             | Selesai |
+| PM5 | **WhatsApp Settings Suite (`/owner/whatsapp`)**: Custom template editor, presets, & simulator| Selesai |
 
-### 3.5 Customer PWA — Pembayaran
+### 3.5 Admin & Owner Panel
 
-| #   | Requirement                                                                               | Prioritas |
-| --- | ----------------------------------------------------------------------------------------- | --------- |
-| PM1 | Ganti opsi e-wallet Indonesia (GoPay/OVO/DANA/ShopeePay) → "eWallet / Pay2Cell" (Namibia) | Tinggi    |
-| PM2 | Fitur Cash on Delivery bisa on/off dari Owner Settings                                    | Sedang    |
+| #   | Requirement                                                                                   | Status  |
+| --- | --------------------------------------------------------------------------------------------- | ------- |
+| O1  | Order Management page di sidebar (tabel pesanan scannable, filter status, action status)      | Selesai |
+| O2  | Manual Save System: Tombol **[Save Changes]** + StickySaveBar + UnsavedChangesPrompt dialog    | Selesai |
+| O3  | Sakelar ketersediaan stok instan (Available/Sold Out) di `/admin/stock`                      | Selesai |
+| O4  | Simbol mata uang **N$** (Namibia Dollar) dan locale `en-ZA` terpusat di seluruh titik         | Selesai |
+| O5  | Media Gallery Library (`/owner/media` dan `/admin/media`) untuk kelola dan pakai ulang foto   | Selesai |
+| O6  | Visual CMS (`/owner/cms`) dan Live Smartphone Simulator (`/owner/preview`)                    | Selesai |
+| O7  | Pemisahan modul Accounts & Staff (`/owner/staff`) vs direktori pelanggan (`/admin/customers`)| Selesai |
+| O8  | Kitchen Kanban Board dengan peringatan keterlambatan masak (>30 menit)                        | Selesai |
+| O9  | Pencetakan struk kasir termal (58mm/80mm) + fitur Thermal Auto-Print saat mulai memasak       | Selesai |
+| O10 | Modul Pengaturan WhatsApp (`/owner/whatsapp`) lengkap dengan template editor dan chat mockup  | Selesai |
 
-### 3.6 Admin & Owner Panel
+### 3.6 Konsistensi Bahasa
 
-| #   | Requirement                                                                                                                                                                                 | Prioritas                       |
-| --- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------- |
-| O1  | **Order Management page baru** di sidebar admin (posisi: bawah Overview, gantikan tab Finance) — tabel pesanan scannable dengan search, filter status, tab alur status, action ganti status | **Tinggi (kritis)**             |
-| O2  | Hapus autosave di semua halaman setting; tambah tombol **[Save Changes]** eksplisit + badge "Unsaved changes" + modal konfirmasi saat keluar halaman                                        | **Tinggi (kritis)**             |
-| O3  | Toggle Availability produk lebih jelas (Toggle Switch, bukan tombol kecil)                                                                                                                  | Rendah                          |
-| O4  | Ganti simbol mata uang R (Rand) → **N$** (Namibia Dollar) di semua input & preview harga                                                                                                    | **Tinggi (kritis, lokalisasi)** |
-| O5  | Tombol [+ New Category] instan di samping dropdown kategori                                                                                                                                 | Sedang                          |
-| O6  | VAT/Pajak 15% dengan angka yang bisa diubah admin + toggle on/off                                                                                                                           | Sedang                          |
-| O7  | Media Gallery Library — tab/modal untuk kelola foto produk (reuse, preview, delete dengan validasi jika masih dipakai)                                                                      | Sedang                          |
-| O8  | Tombol Edit/Delete/Toggle Active pada setiap item Content CMS (Hero Banner, Announcement, Promo Banner, Welcome Screen, Contact & Socials, FAQ)                                             | Sedang                          |
-| O9  | Hero/Promo banner di sisi CMS: full-width guide + rekomendasi aspect ratio (16:9 atau 2:1) ditampilkan di form upload                                                                       | Rendah                          |
-| O10 | Pisahkan modul "Accounts & Staff" (internal only) dari "Customers" (pelanggan PWA) — buat tab Customers terpisah dengan +Add New & edit manual                                              | Sedang                          |
-| O11 | Konfirmasi & lengkapi: apakah semua elemen konten (topping, ukuran, urutan kategori, FAQ) sudah punya kontrol CMS-nya — audit + tambal yang masih hardcoded                                 | **Tinggi (kritis)**             |
-
-### 3.7 Konsistensi Bahasa (Lokalisasi UI)
-
-| #   | Requirement                                                                                                                                                                                                                                                                         | Prioritas |
-| --- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------- |
-| L1  | Standarisasi seluruh teks UI ke Bahasa Inggris (PWA & Dashboard) — hapus campuran ID/EN                                                                                                                                                                                             | Sedang    |
-| L2  | Perbaikan spesifik: "Lihat"→"View/See Details", "Foods"→"Meals", "Pertanyaan Umum (FAQ)"→"Frequently Asked Questions (FAQ)", "Open now"→"Open Now", "All time"→"All Time", "Vouchers & Promo"→"Vouchers & Promos", "Special request"→"Special Request", "Add to cart"→"Add to Cart" | Sedang    |
+| #   | Requirement                                                                                   | Status  |
+| --- | --------------------------------------------------------------------------------------------- | ------- |
+| L1  | Standarisasi seluruh antarmuka (Storefront, Admin, Owner, WhatsApp Settings) ke Bahasa Inggris| Selesai |
 
 ---
 
-## 4. Perubahan Skema Data yang Diperlukan (Ringkasan)
+## 4. Struktur Database & Model Data Terkini
 
-> Detail teknis lengkap ada di **Implementation Plan**. Ringkasan dampak schema:
-
-1. **`orders`** — `customer` JSONB tetap menampung data guest; tambah kolom `account_id VARCHAR(50) NULL` (nullable, FK opsional ke `accounts.id`) untuk order dari user yang login.
-2. **`menu_items.groups`** — perlu extend struktur JSONB agar setiap grup kustomisasi punya field `enabled: boolean` (toggle ON/OFF) dan opsi mendukung `priceDelta` (boleh 0).
-3. **`menu_items`** — tambah field `specialRequestEnabled: boolean` (default true) untuk toggle kolom catatan per produk.
-4. **`app_settings`** — tambah field baru: `vatPercent`, `vatEnabled`, `codEnabled`, `mustTryItemIds` (array), `categoryOrder` (array), `currencySymbol` (default `"N$"`).
-5. **Tabel baru `media_assets`** — untuk Media Gallery: `id, url, filename, uploaded_at, used_by_menu_ids (JSONB)`.
-6. **`cms_content`** — extend struktur agar tiap item (banner, FAQ, dll) punya `active: boolean` per baris agar toggle show/hide berfungsi.
-
----
-
-## 5. Non-Functional Requirements
-
-- Perubahan auth **tidak boleh** merusak sesi admin/owner yang sudah berjalan (test regresi login admin wajib lulus).
-- Semua perubahan CMS baru (toggle kustomisasi, VAT, media gallery) harus tetap kompatibel dengan data lama (migrasi non-destruktif, gunakan default value saat field belum ada).
-- Manual save system tidak boleh menghapus data yang sudah tersimpan sebelumnya jika admin batal menyimpan (cukup discard perubahan lokal).
-- Perubahan mata uang R→N$ harus konsisten di seluruh titik (form admin, preview, struk cetak, pesan WhatsApp, halaman customer).
+1. **`orders`**: Menyimpan seluruh transaksi; kolom `account_id` bernilai `NULL` untuk pesanan tamu.
+2. **`menu_items`**: Menyimpan katalog hidangan dengan kolom `groups` (JSONB) dan `special_request_enabled`.
+3. **`app_settings`**: Menyimpan `vatPercent`, `vatEnabled`, `codEnabled`, `currencySymbol`, `whatsapp`, `whatsappTemplate`, `whatsappHeader`, `whatsappFooter`, `whatsappPreset`, `baseFee`, `feePerKm`, dll.
+4. **`media_assets`**: Menyimpan metadata aset gambar (`id, url, filename, uploaded_at, used_by_menu_ids`).
+5. **`cms_content`**: Menyimpan hero banner, announcement, welcome screen, FAQ, must-try IDs, urutan kategori.
+6. **`promos` & `vouchers`**: Menyimpan promo carousel dan kode kupon diskon.
+7. **`accounts` & `staff`**: Pemisahan akun pelanggan PWA (`accounts`) dan staf internal (`staff`).
 
 ---
 
-## 6. Out of Scope (Versi Ini)
+## 5. Ringkasan Verifikasi & Status Operasional
 
-- Migrasi/merge riwayat order guest ke akun setelah pelanggan register belakangan (bisa jadi requirement v1.2).
-- Payment gateway langsung (Pay2Cell tetap manual/transfer seperti bank transfer saat ini, hanya ganti label & branding).
-- Multi-bahasa (bahasa ganda ID/EN toggle) — requirement saat ini hanya standarisasi ke satu bahasa (Inggris).
-
----
-
-## 7. Open Questions untuk Client
-
-1. Apakah guest checkout tetap berhak dapat poin loyalitas jika mengisi nomor WhatsApp yang sama dengan akun terdaftar? Atau poin murni hanya untuk order saat login?
-2. Untuk tracking order guest — apakah cukup via link unik di halaman order-success, atau perlu halaman "cek pesanan" dengan input kode order manual?
-3. Apakah VAT 15% berlaku untuk semua kategori produk, atau ada pengecualian (mis. minuman)?
-4. Untuk pemisahan modul Accounts & Staff vs Customers — apakah data customer lama (yang sudah ada di tabel `accounts` dengan role `user`) perlu dipindah/dilabeli ulang, atau cukup dipisah secara tampilan saja?
+- **36 Rute Aktif:** Seluruh rute storefront, admin, dan owner suite teruji 100% lulus HTTP 200 OK.
+- **Pengujian Regresi:** Rangkaian tes regresi (Must-Try Grid, Category ScrollSpy, VAT, COD, dan WhatsApp Builder) terverifikasi lulus.
+- **Linter & Kompilasi:** Bersih tanpa error linting atau kegagalan kompilasi.

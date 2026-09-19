@@ -76,7 +76,7 @@ export const catalogItems: MenuItem[] = [
   {
     id: "m2",
     name: "Crispy Smashed Chicken",
-    description: "Crispy smashed chicken served with fresh chili sambal.",
+    description: "Crispy smashed chicken served with fresh chili sauce.",
     price: 85,
     category: "Meals",
     image: "",

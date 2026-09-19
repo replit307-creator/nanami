@@ -44,9 +44,34 @@ import {
 } from "./server-functions";
 import { formatCurrency, setCurrencySymbol } from "./currency";
 import { resolveMenuImage, handleImageError } from "./images";
-import { cleanWhatsappNumber, buildWhatsappMessage } from "./whatsapp";
+import {
+  cleanWhatsappNumber,
+  buildWhatsappMessage,
+  formatWhatsappDisplayNumber,
+  WHATSAPP_VARIABLES,
+  WHATSAPP_PRESETS,
+} from "./whatsapp";
+import {
+  resolveOrderType,
+  validateNewOrderSubmission,
+  getAvailableOrderTypes,
+} from "./order-availability";
 
-export { resolveMenuImage, handleImageError, cleanWhatsappNumber, buildWhatsappMessage };
+import { haversineKm } from "./geo";
+
+export {
+  resolveMenuImage,
+  handleImageError,
+  cleanWhatsappNumber,
+  buildWhatsappMessage,
+  formatWhatsappDisplayNumber,
+  resolveOrderType,
+  validateNewOrderSubmission,
+  getAvailableOrderTypes,
+  WHATSAPP_VARIABLES,
+  WHATSAPP_PRESETS,
+  haversineKm,
+};
 export { DEFAULT_CATEGORIES, CATEGORIES, defaultCmsContent, defaultCheckoutCms };
 export type {
   Category,
@@ -202,10 +227,10 @@ export const DEMO_ACCOUNTS: Account[] = [
     email: "owner@nanami.id",
     password: "owner123",
     name: "Nanami Owner",
-    phone: "0834567890",
+    phone: "+264811234567",
     role: "owner",
-    address: "HQ Nanami Kitchen, Jakarta",
-    addresses: ["HQ Nanami Kitchen, Jakarta"],
+    address: "Nanami Kitchen HQ, Independence Ave, Windhoek, Namibia",
+    addresses: ["Nanami Kitchen HQ, Independence Ave, Windhoek, Namibia"],
     points: 1500,
   },
   {
@@ -213,10 +238,10 @@ export const DEMO_ACCOUNTS: Account[] = [
     email: "admin@nanami.id",
     password: "admin123",
     name: "Kitchen Admin",
-    phone: "0823456789",
+    phone: "+264812345678",
     role: "admin",
-    address: "Kitchen 1, Nanami Kitchen",
-    addresses: ["Kitchen 1, Nanami Kitchen"],
+    address: "Kitchen 1, Nanami Kitchen, Windhoek",
+    addresses: ["Kitchen 1, Nanami Kitchen, Windhoek"],
     points: 120,
   },
   {
@@ -224,10 +249,10 @@ export const DEMO_ACCOUNTS: Account[] = [
     email: "staff@nanami.id",
     password: "staff123",
     name: "Kitchen Staff",
-    phone: "0812-5555-6666",
+    phone: "+264813456789",
     role: "staff",
-    address: "Nanami Kitchen Line 1",
-    addresses: ["Nanami Kitchen Line 1"],
+    address: "Nanami Kitchen Line 1, Windhoek",
+    addresses: ["Nanami Kitchen Line 1, Windhoek"],
     points: 0,
   },
   {
@@ -235,10 +260,10 @@ export const DEMO_ACCOUNTS: Account[] = [
     email: "user@nanami.id",
     password: "user123",
     name: "Customer Nanami",
-    phone: "0812345678",
+    phone: "+264814567890",
     role: "user",
-    address: "Jl. Sudirman No. 10, Jakarta",
-    addresses: ["Jl. Sudirman No. 10, Jakarta"],
+    address: "15 Sam Nujoma Drive, Windhoek, Namibia",
+    addresses: ["15 Sam Nujoma Drive, Windhoek, Namibia"],
     points: 350,
   },
   {
@@ -248,8 +273,11 @@ export const DEMO_ACCOUNTS: Account[] = [
     name: "David Smith",
     phone: "0812345678",
     role: "user",
-    address: "12 Rosebank Road, Rosebank, Johannesburg",
-    addresses: ["12 Rosebank Road, Rosebank, Johannesburg", "Building 4, Sandton City, Sandton"],
+    address: "12 Independence Avenue, Windhoek Central, Windhoek",
+    addresses: [
+      "12 Independence Avenue, Windhoek Central, Windhoek",
+      "45 Sam Nujoma Drive, Klein Windhoek, Windhoek",
+    ],
     points: 350,
   },
   {
@@ -257,10 +285,10 @@ export const DEMO_ACCOUNTS: Account[] = [
     email: "admin@nanamikitchen.com",
     password: "admin123",
     name: "Sarah Jenkins",
-    phone: "0823456789",
+    phone: "+264812345678",
     role: "admin",
-    address: "Kitchen 2, Rosebank Mall, Johannesburg",
-    addresses: ["Kitchen 2, Rosebank Mall, Johannesburg"],
+    address: "Kitchen 2, Maerua Mall, Windhoek",
+    addresses: ["Kitchen 2, Maerua Mall, Windhoek"],
     points: 120,
   },
   {
@@ -268,10 +296,10 @@ export const DEMO_ACCOUNTS: Account[] = [
     email: "staff@nanamikitchen.com",
     password: "staff123",
     name: "David Miller (Kitchen)",
-    phone: "0812-5555-6666",
+    phone: "+264813456789",
     role: "staff",
-    address: "Nanami Kitchen Line 1",
-    addresses: ["Nanami Kitchen Line 1"],
+    address: "Nanami Kitchen Line 1, Windhoek",
+    addresses: ["Nanami Kitchen Line 1, Windhoek"],
     points: 0,
   },
   {
@@ -279,10 +307,10 @@ export const DEMO_ACCOUNTS: Account[] = [
     email: "owner@nanamikitchen.com",
     password: "owner123",
     name: "Nanami Miller",
-    phone: "0834567890",
+    phone: "+264811234567",
     role: "owner",
-    address: "HQ Nanami Kitchen, Rosebank, Johannesburg",
-    addresses: ["HQ Nanami Kitchen, Rosebank, Johannesburg"],
+    address: "HQ Nanami Kitchen, Windhoek Central, Windhoek",
+    addresses: ["HQ Nanami Kitchen, Windhoek Central, Windhoek"],
     points: 1500,
   },
 ];
@@ -605,26 +633,33 @@ export const actions = {
         if (data.settings?.currencySymbol) {
           setCurrencySymbol(data.settings.currencySymbol);
         }
-        set((s) => ({
-          ...s,
-          settings: data.settings ? { ...s.settings, ...data.settings } : s.settings,
-          cms: data.cms
-            ? {
-                ...s.cms,
-                ...data.cms,
-                checkout: {
-                  ...defaultCheckoutCms,
-                  ...(data.cms.checkout || {}),
-                },
-              }
-            : s.cms,
-          menu: data.menu && data.menu.length ? data.menu.map(normalizeMenuItem) : s.menu,
-          orders: data.orders && data.orders.length ? data.orders.map(normalizeOrder) : s.orders,
-          promos: data.promos && data.promos.length ? data.promos : s.promos,
-          vouchers: data.vouchers && data.vouchers.length ? data.vouchers : s.vouchers,
-          accounts: data.accounts && data.accounts.length ? data.accounts : s.accounts,
-          staff: data.staff && data.staff.length ? data.staff : s.staff,
-        }));
+        set((s) => {
+          const effectiveSettings = data.settings
+            ? { ...s.settings, ...data.settings }
+            : s.settings;
+          const resolvedType = resolveOrderType(s.orderType, effectiveSettings) || s.orderType;
+          return {
+            ...s,
+            settings: effectiveSettings,
+            orderType: resolvedType,
+            cms: data.cms
+              ? {
+                  ...s.cms,
+                  ...data.cms,
+                  checkout: {
+                    ...defaultCheckoutCms,
+                    ...(data.cms.checkout || {}),
+                  },
+                }
+              : s.cms,
+            menu: data.menu && data.menu.length ? data.menu.map(normalizeMenuItem) : s.menu,
+            orders: data.orders && data.orders.length ? data.orders.map(normalizeOrder) : s.orders,
+            promos: data.promos && data.promos.length ? data.promos : s.promos,
+            vouchers: data.vouchers && data.vouchers.length ? data.vouchers : s.vouchers,
+            accounts: data.accounts && data.accounts.length ? data.accounts : s.accounts,
+            staff: data.staff && data.staff.length ? data.staff : s.staff,
+          };
+        });
         console.log("State synchronized from PostgreSQL database successfully.");
       }
     } catch (error) {
@@ -632,7 +667,8 @@ export const actions = {
     }
   },
   setOrderType(type: "pickup" | "delivery") {
-    set((s) => ({ ...s, orderType: type, orderTypeChosen: true }));
+    const resolved = resolveOrderType(type, state.settings) || type;
+    set((s) => ({ ...s, orderType: resolved, orderTypeChosen: true }));
   },
   setDistanceKm(km: number) {
     set((s) => ({ ...s, distanceKm: Math.max(0.1, Math.round(km * 10) / 10) }));
@@ -940,6 +976,90 @@ export const actions = {
     });
     return full;
   },
+  async submitOrder(
+    orderData: Omit<Order, "id" | "code" | "createdAt" | "status" | "paid" | "pointsEarned">,
+  ): Promise<{
+    ok: boolean;
+    order?: Order;
+    error?: string;
+    rejected?: boolean;
+  }> {
+    const clientValidation = validateNewOrderSubmission(orderData.type, state.settings);
+    if (!clientValidation.valid) {
+      return { ok: false, error: clientValidation.error, rejected: true };
+    }
+
+    const isMember = Boolean(state.profile.signedIn);
+    const pointsEarned = isMember
+      ? Math.floor(orderData.total / 10000) * state.settings.pointsPer10k
+      : 0;
+    const accountId = isMember
+      ? state.accounts.find((a) => a.email.toLowerCase() === state.profile.email.toLowerCase())
+          ?.id || null
+      : null;
+
+    const full: Order = {
+      ...orderData,
+      id: uid(),
+      code: "NK-" + Math.floor(1000 + Math.random() * 9000),
+      createdAt: Date.now(),
+      status: "Pending Payment",
+      paid: false,
+      pointsEarned,
+      accountId,
+    };
+
+    try {
+      const res = await saveOrderDb({ data: full });
+      if (!res.ok) {
+        return {
+          ok: false,
+          error: res.error || "Order was rejected by server.",
+          rejected: (res as any).rejected,
+        };
+      }
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      return { ok: false, error: msg || "Failed to submit order to server." };
+    }
+
+    set((s) => {
+      const updatedMenu = s.menu.map((m) => {
+        if (m.stock === null || m.stock === undefined) return m;
+        const ordered = full.lines
+          .filter((l) => l.itemId === m.id)
+          .reduce((sum, l) => sum + l.qty, 0);
+        if (!ordered) return m;
+        const stock = Math.max(0, m.stock - ordered);
+        const updated = { ...m, stock, available: stock > 0 };
+        saveMenuItemDb({ data: updated }).catch(console.error);
+        return updated;
+      });
+
+      let updatedPoints = s.profile.points;
+      if (isMember && s.profile.email) {
+        const account = s.accounts.find(
+          (a) => a.email.toLowerCase() === s.profile.email.toLowerCase(),
+        );
+        updatedPoints = s.profile.points + pointsEarned;
+        if (account) {
+          const updatedAcc = { ...account, points: updatedPoints };
+          saveAccountDb({ data: updatedAcc }).catch(console.error);
+        }
+      }
+
+      return {
+        ...s,
+        orders: [full, ...s.orders],
+        cart: [],
+        voucherCode: "",
+        menu: updatedMenu,
+        profile: isMember ? { ...s.profile, points: updatedPoints } : s.profile,
+      };
+    });
+
+    return { ok: true, order: full };
+  },
   setOrderStatus(id: string, status: OrderStatus) {
     set((s) => {
       const updatedOrders = s.orders.map((o) =>
@@ -1110,7 +1230,8 @@ export const actions = {
       }
       const updated = { ...s.settings, ...patch };
       saveSettingsDb({ data: updated }).catch(console.error);
-      return { ...s, settings: updated };
+      const resolved = resolveOrderType(s.orderType, updated) || s.orderType;
+      return { ...s, settings: updated, orderType: resolved };
     });
   },
   updateProfile(patch: Partial<Profile>) {

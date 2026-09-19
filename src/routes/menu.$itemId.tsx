@@ -14,13 +14,13 @@ export const Route = createFileRoute("/menu/$itemId")({
   loader: () => null,
   head: () => ({
     meta: [
-      { title: "Detail Menu — Nanami Kitchen" },
+      { title: "Menu Details — Nanami Kitchen" },
       {
         name: "description",
         content:
           "Customize your dish — size, spice level and extra toppings — then add it to your cart.",
       },
-      { property: "og:title", content: "Detail Menu — Nanami Kitchen" },
+      { property: "og:title", content: "Menu Details — Nanami Kitchen" },
       { property: "og:description", content: "Customize your dish and add it to your cart." },
     ],
   }),

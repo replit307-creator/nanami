@@ -366,9 +366,66 @@ export const deleteMenuItemDb = createServerFn({ method: "POST" })
     }
   });
 
+async function isExistingOrder(orderId: string, orderCode?: string): Promise<boolean> {
+  try {
+    const { getStorageData } = await import("../server/persistent-storage");
+    const current = getStorageData();
+    if (current.orders.some((o) => o.id === orderId || (orderCode && o.code === orderCode))) {
+      return true;
+    }
+  } catch (e) {
+    // continue to database check
+  }
+
+  const { sql } = await getDb();
+  if (sql) {
+    try {
+      const rows = await sql`
+        SELECT id FROM orders 
+        WHERE id = ${orderId} ${orderCode ? sql`OR code = ${orderCode}` : sql``}
+        LIMIT 1
+      `;
+      if (rows && rows.length > 0) return true;
+    } catch (e) {
+      // continue
+    }
+  }
+
+  return false;
+}
+
+async function getEffectiveServerSettings(): Promise<Settings> {
+  try {
+    const { sql } = await getDb();
+    if (sql) {
+      const rows = await sql`SELECT data FROM app_settings WHERE id = 'main_settings' LIMIT 1`;
+      if (rows && rows.length > 0 && rows[0]?.data) {
+        return rows[0].data as Settings;
+      }
+    }
+  } catch (e) {
+    // fallback
+  }
+  const { getStorageData } = await import("../server/persistent-storage");
+  return getStorageData().settings;
+}
+
 export const saveOrderDb = createServerFn({ method: "POST" })
   .validator((order: Order) => order)
   .handler(async ({ data: order }) => {
+    // 1. Determine if this is an existing order by checking if id or code is already in storage/DB
+    const isExisting = await isExistingOrder(order.id, order.code);
+
+    // 2. If it's a NEW order, enforce server-side validation: storeOpen and orderType availability
+    if (!isExisting) {
+      const currentSettings = await getEffectiveServerSettings();
+      const { validateNewOrderSubmission } = await import("./order-availability");
+      const validation = validateNewOrderSubmission(order.type, currentSettings);
+      if (!validation.valid) {
+        return { ok: false, error: validation.error, rejected: true };
+      }
+    }
+
     try {
       const { saveOrderStorage } = await import("../server/persistent-storage");
       saveOrderStorage(order);
@@ -410,6 +467,29 @@ export const saveOrderDb = createServerFn({ method: "POST" })
       console.warn("Failed to save order to PostgreSQL (fallback saved):", e);
       return { ok: true, source: "storage" };
     }
+  });
+
+export const searchLocationsFn = createServerFn({ method: "POST" })
+  .validator((data: { query: string }) => data)
+  .handler(async ({ data }) => {
+    const { searchPlacesNominatim } = await import("../server/location-service");
+    const results = await searchPlacesNominatim(data.query);
+    return { results };
+  });
+
+export const reverseGeocodeFn = createServerFn({ method: "POST" })
+  .validator((data: { lat: number; lng: number }) => data)
+  .handler(async ({ data }) => {
+    const { reverseGeocodeNominatim } = await import("../server/location-service");
+    const address = await reverseGeocodeNominatim(data.lat, data.lng);
+    return { address };
+  });
+
+export const resolveMapsLinkFn = createServerFn({ method: "POST" })
+  .validator((data: { url: string }) => data)
+  .handler(async ({ data }) => {
+    const { resolveGoogleMapsLink } = await import("../server/location-service");
+    return await resolveGoogleMapsLink(data.url);
   });
 
 export const saveVoucherDb = createServerFn({ method: "POST" })

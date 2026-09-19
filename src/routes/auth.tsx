@@ -1,6 +1,6 @@
 import { createFileRoute, redirect } from "@tanstack/react-router";
 
-// Halaman auth lama digantikan oleh /login dan /register.
+// Legacy auth page redirected to /login and /register.
 export const Route = createFileRoute("/auth")({
   beforeLoad: () => {
     throw redirect({ to: "/login" });

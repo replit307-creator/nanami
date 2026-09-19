@@ -69,7 +69,7 @@ function OrderCard({ order }: { order: Order }) {
           aria-label="Send to WhatsApp Owner"
           onClick={() =>
             window.open(
-              `https://wa.me/${targetWa}?text=${encodeURIComponent(buildWhatsappMessage(order, settings.currencySymbol))}`,
+              `https://wa.me/${targetWa}?text=${encodeURIComponent(buildWhatsappMessage(order, settings))}`,
               "_blank",
             )
           }

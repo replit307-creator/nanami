@@ -10,8 +10,13 @@ import {
   Loader2,
   MapPin,
   Wallet,
+  Truck,
+  Store,
+  AlertCircle,
+  Clock,
 } from "lucide-react";
 import { AppShell } from "@/components/AppShell";
+import { LocationPicker } from "@/components/LocationPicker";
 import {
   actions,
   buildWhatsappMessage,
@@ -25,9 +30,11 @@ import {
   resolveMenuImage,
   handleImageError,
   defaultCheckoutCms,
+  resolveOrderType,
+  validateNewOrderSubmission,
+  getAvailableOrderTypes,
 } from "@/lib/store";
 import { haversineKm } from "@/lib/geo";
-import mapImg from "@/assets/checkout-map.jpg";
 
 interface PaymentOption {
   id: "ewallet" | "bank" | "cod";
@@ -103,15 +110,25 @@ function Checkout() {
   const [name, setName] = useState(profile.name || checkoutCms.defaultFullName || "");
   const [phone, setPhone] = useState(profile.phone || checkoutCms.defaultPhone || "");
   const [address, setAddress] = useState(profile.address || DEFAULT_ADDRESS);
-  const [editingAddress, setEditingAddress] = useState(false);
-  const [locating, setLocating] = useState(false);
-  const setDistance = (km: number) => actions.setDistanceKm(km);
+  const [lat, setLat] = useState<number | undefined>(profile.lat ?? settings.storeLat);
+  const [lng, setLng] = useState<number | undefined>(profile.lng ?? settings.storeLng);
+  const [mapsUrl, setMapsUrl] = useState<string | undefined>(undefined);
   const [deliveryNote, setDeliveryNote] = useState("");
   const [payment, setPayment] = useState<PaymentId>("ewallet");
   const [copied, setCopied] = useState("");
   const [error, setError] = useState("");
+  const [submitting, setSubmitting] = useState(false);
 
-  const deliveryFee = deliveryFeeFor(settings, orderType, distance, subtotal);
+  // Auto-switch orderType if the current mode is disabled by store settings
+  useEffect(() => {
+    const resolved = resolveOrderType(orderType, settings);
+    if (resolved && resolved !== orderType) {
+      actions.setOrderType(resolved);
+    }
+  }, [settings, orderType]);
+
+  const deliveryFee =
+    orderType === "pickup" ? 0 : deliveryFeeFor(settings, orderType, distance, subtotal);
   const voucher = findVoucher(vouchers, voucherCode);
   const discount = discountFor(subtotal, voucher);
   const vatAmount = settings.vatEnabled
@@ -126,47 +143,25 @@ function Checkout() {
     !storeClosed &&
     !serviceOff &&
     !detailsMissing &&
-    (orderType === "pickup" || address) &&
-    !outOfRange &&
+    (orderType === "pickup" || (Boolean(address.trim()) && !outOfRange)) &&
     cart.length > 0;
 
-  function requestCurrentLocation() {
-    if (typeof navigator === "undefined" || !("geolocation" in navigator)) {
-      setError("Geolocation is not supported by your browser.");
-      return;
+  function handleLocationChange(loc: {
+    lat?: number;
+    lng?: number;
+    address?: string;
+    mapsUrl?: string;
+    distanceKm?: number;
+  }) {
+    if (loc.lat !== undefined) setLat(loc.lat);
+    if (loc.lng !== undefined) setLng(loc.lng);
+    if (loc.mapsUrl) setMapsUrl(loc.mapsUrl);
+    if (loc.distanceKm !== undefined) {
+      actions.setDistanceKm(loc.distanceKm);
+      if (loc.mapsUrl) {
+        actions.setCustomerPoint(loc.mapsUrl, loc.distanceKm);
+      }
     }
-    setLocating(true);
-    setError("");
-    navigator.geolocation.getCurrentPosition(
-      (pos) => {
-        setLocating(false);
-        const lat = pos.coords.latitude;
-        const lng = pos.coords.longitude;
-        const googleMapsLink = `https://maps.google.com/?q=${lat.toFixed(6)},${lng.toFixed(6)}`;
-        const km = Math.max(
-          1,
-          Math.round(
-            haversineKm({ lat: settings.storeLat, lng: settings.storeLng }, { lat, lng }) *
-              (settings.routeFactor || 1) *
-              10,
-          ) / 10,
-        );
-        actions.setCustomerPoint(googleMapsLink, km);
-        setDistance(km);
-        setAddress(`Current Location (${lat.toFixed(4)}, ${lng.toFixed(4)})`);
-      },
-      (err) => {
-        setLocating(false);
-        if (err.code === 1) {
-          setError(
-            "Location access was denied. Please allow permission or enter address manually.",
-          );
-        } else {
-          setError(`Unable to fetch location: ${err.message}`);
-        }
-      },
-      { enableHighAccuracy: true, timeout: 10000 },
-    );
   }
 
   const availablePaymentOptions: PaymentOption[] = useMemo(
@@ -238,7 +233,7 @@ function Checkout() {
 
   function goToStep(next: number) {
     if (storeClosed) {
-      setError("The store is currently closed. Checkout is disabled.");
+      setError("The store is currently closed. Orders cannot be placed at this time.");
       return;
     }
     if (serviceOff) {
@@ -247,9 +242,17 @@ function Checkout() {
       );
       return;
     }
-    if (next === 1 && outOfRange) {
-      setError(`Out of delivery range (max ${settings.maxRadiusKm} km).`);
-      return;
+    if (next >= 1 && orderType === "delivery") {
+      if (!address.trim()) {
+        setError("Please enter or select a delivery address.");
+        return;
+      }
+      if (outOfRange) {
+        setError(
+          `Out of delivery range (~${distance} km > max ${settings.maxRadiusKm} km). Please choose a closer address or switch to Kitchen Pickup.`,
+        );
+        return;
+      }
     }
     if (next === 2 && detailsMissing) {
       setError("Please fill in your name and WhatsApp number.");
@@ -259,10 +262,25 @@ function Checkout() {
     setStep(next);
   }
 
-  function submit() {
-    if (!valid) return;
-    submittedRef.current = true;
-    const order = actions.placeOrder({
+  async function submit() {
+    if (!valid || submitting) return;
+    setSubmitting(true);
+    setError("");
+
+    const orderCustomer = {
+      name: name.trim(),
+      phone: phone.trim(),
+      address: orderType === "pickup" ? "Kitchen Pickup (Nanami Kitchen HQ)" : address.trim(),
+      deliveryNote: deliveryNote.trim(),
+      lat: orderType === "delivery" ? lat : undefined,
+      lng: orderType === "delivery" ? lng : undefined,
+      mapsUrl: orderType === "delivery" ? mapsUrl : undefined,
+    };
+
+    const finalDeliveryFee = orderType === "pickup" ? 0 : deliveryFee;
+    const finalTotal = Math.max(0, subtotal + vatAmount + finalDeliveryFee - discount);
+
+    const res = await actions.submitOrder({
       type: orderType,
       lines: cart,
       subtotal,
@@ -270,22 +288,38 @@ function Checkout() {
       vatPercent: settings.vatEnabled ? (settings.vatPercent ?? 15) : undefined,
       discount,
       voucherCode: discount > 0 ? voucherCode : "",
-      deliveryFee,
-      total,
-      etaMinutes: orderType === "delivery" ? 35 : 25,
+      deliveryFee: finalDeliveryFee,
+      total: finalTotal,
+      etaMinutes: orderType === "delivery" ? 35 : 20,
       paymentMethod:
         payment === "bank"
           ? checkoutCms.bankLabel || "Bank Transfer / Instant EFT"
           : payment === "cod"
             ? checkoutCms.codLabel || "Cash on Delivery"
             : checkoutCms.ewalletLabel || "eWallet / Pay2Cell",
-      customer: { name, phone, address, deliveryNote },
+      customer: orderCustomer,
     });
-    actions.updateProfile({ name, phone, address });
+
+    setSubmitting(false);
+
+    if (!res.ok || !res.order) {
+      setError(res.error || "Order was rejected by server. Please verify availability.");
+      return;
+    }
+
+    submittedRef.current = true;
+    actions.updateProfile({
+      name: name.trim(),
+      phone: phone.trim(),
+      address: orderType === "delivery" ? address : profile.address,
+      lat: orderType === "delivery" ? lat : profile.lat,
+      lng: orderType === "delivery" ? lng : profile.lng,
+    });
+
     const targetWa = cleanWhatsappNumber(settings.whatsapp);
-    const textMsg = encodeURIComponent(buildWhatsappMessage(order, settings.currencySymbol));
+    const textMsg = encodeURIComponent(buildWhatsappMessage(res.order, settings));
     window.open(`https://wa.me/${targetWa}?text=${textMsg}`, "_blank");
-    navigate({ to: "/order-success", search: { code: order.code } });
+    navigate({ to: "/order-success", search: { code: res.order.code } });
   }
 
   const field =
@@ -340,141 +374,233 @@ function Checkout() {
 
       {step === 0 && (
         <>
-          {/* Delivery address card */}
-          <section className="mt-3 rounded-xl border border-border bg-card p-3">
-            <div className="flex items-start justify-between">
-              <h2 className="text-sm font-bold">Delivery Address</h2>
-              <div className="flex items-center gap-2">
-                <button
-                  type="button"
-                  onClick={requestCurrentLocation}
-                  disabled={locating}
-                  className="inline-flex items-center gap-1 text-xs font-semibold text-primary hover:underline disabled:opacity-50"
-                >
-                  {locating ? (
-                    <Loader2 className="size-3 animate-spin" />
-                  ) : (
-                    <Compass className="size-3" />
-                  )}
-                  <span>{locating ? "Locating..." : "Use GPS"}</span>
-                </button>
-                <span className="text-xs text-muted-foreground">&bull;</span>
-                <button
-                  onClick={() => navigate({ to: "/address" })}
-                  className="text-xs font-bold text-primary hover:underline"
-                >
-                  {editingAddress ? "Done" : "Change"}
-                </button>
+          {/* Store Closed Banner */}
+          {storeClosed && (
+            <div className="mt-3 rounded-xl border border-destructive/30 bg-destructive/10 p-3 text-xs text-destructive flex items-start gap-2">
+              <AlertCircle className="size-4 shrink-0 mt-0.5" />
+              <div>
+                <span className="font-bold block">Nanami Kitchen is currently closed</span>
+                <span>
+                  We are not accepting orders right now. Please check back during kitchen hours.
+                </span>
               </div>
             </div>
-            {editingAddress ? (
-              <div className="mt-2 space-y-2">
-                <textarea
-                  value={address}
-                  onChange={(e) => setAddress(e.target.value)}
-                  rows={2}
-                  className={field}
-                />
-                <label className="block text-[11px] text-muted-foreground">
-                  <span className="flex items-center gap-1">
-                    <MapPin className="size-3" /> Distance from kitchen: {distance} km
-                  </span>
-                  <input
-                    type="range"
-                    min={1}
-                    max={20}
-                    value={distance}
-                    onChange={(e) => setDistance(Number(e.target.value))}
-                    className="mt-1 w-full accent-[var(--primary)]"
-                  />
-                </label>
-                <input
-                  value={deliveryNote}
-                  onChange={(e) => setDeliveryNote(e.target.value)}
-                  placeholder="Delivery note (e.g. leave at security post)"
-                  className={field}
-                />
-              </div>
-            ) : (
-              <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
-                {orderType === "delivery" ? address : "Pickup at Nanami Kitchen"}
-              </p>
-            )}
-            {outOfRange && (
-              <p className="mt-2 rounded-lg bg-destructive/15 px-2.5 py-1.5 text-[11px] text-destructive">
-                Out of delivery range (max {settings.maxRadiusKm} km).
-              </p>
-            )}
-          </section>
+          )}
 
-          {/* Delivery method */}
-          <h2 className="mt-3 text-xs font-bold">Delivery Method</h2>
-          <div className="mt-1.5 grid grid-cols-2 gap-2">
-            {(["delivery", "pickup"] as const).map((t) => (
-              <button
-                key={t}
-                onClick={() => actions.setOrderType(t)}
-                className={`flex items-center justify-center gap-1.5 rounded-lg py-2 text-xs font-bold capitalize transition ${
-                  orderType === t
-                    ? "bg-primary text-primary-foreground shadow-xs"
-                    : "border border-border bg-card text-muted-foreground hover:text-foreground"
-                }`}
-              >
-                <span
-                  className={`size-1.5 rounded-full ${orderType === t ? "bg-primary-foreground" : "bg-muted-foreground/50"}`}
-                />
-                {t}
-              </button>
-            ))}
-          </div>
-
-          {/* Fee & ETA */}
-          <div className="mt-3 space-y-1.5 rounded-xl border border-border bg-card p-2.5 text-xs">
+          {/* Delivery Method Toggle */}
+          <div className="mt-3 space-y-1.5">
             <div className="flex items-center justify-between">
-              <span className="text-muted-foreground">Delivery Fee</span>
-              <span className="font-semibold">{rupiah(deliveryFee)}</span>
-            </div>
-            <div className="flex items-center justify-between">
-              <span className="text-muted-foreground">Estimated Arrival</span>
-              <span className="font-semibold">
-                {orderType === "delivery" ? "25 - 35 minutes" : "15 - 25 minutes"}
+              <h2 className="text-xs font-bold text-foreground">Order Method</h2>
+              <span className="text-[11px] text-muted-foreground">
+                {orderType === "delivery" ? "Doorstep Delivery" : "Kitchen Self-Pickup"}
               </span>
             </div>
+
+            <div className="grid grid-cols-2 gap-2">
+              {/* Delivery button */}
+              <button
+                type="button"
+                disabled={!settings.deliveryOn}
+                onClick={() => actions.setOrderType("delivery")}
+                className={`flex flex-col items-center justify-center p-3 rounded-xl border text-xs font-bold transition ${
+                  orderType === "delivery"
+                    ? "border-primary bg-primary/10 text-primary shadow-xs"
+                    : !settings.deliveryOn
+                      ? "border-border bg-muted/40 text-muted-foreground opacity-50 cursor-not-allowed"
+                      : "border-border bg-card text-muted-foreground hover:text-foreground hover:border-border/80"
+                }`}
+              >
+                <div className="flex items-center gap-1.5">
+                  <Truck className="size-4" />
+                  <span>Delivery</span>
+                </div>
+                <span className="mt-1 text-[10px] font-normal">
+                  {!settings.deliveryOn ? "Temporarily Off" : "To your door"}
+                </span>
+              </button>
+
+              {/* Pickup button */}
+              <button
+                type="button"
+                disabled={!settings.pickupOn}
+                onClick={() => actions.setOrderType("pickup")}
+                className={`flex flex-col items-center justify-center p-3 rounded-xl border text-xs font-bold transition ${
+                  orderType === "pickup"
+                    ? "border-primary bg-primary/10 text-primary shadow-xs"
+                    : !settings.pickupOn
+                      ? "border-border bg-muted/40 text-muted-foreground opacity-50 cursor-not-allowed"
+                      : "border-border bg-card text-muted-foreground hover:text-foreground hover:border-border/80"
+                }`}
+              >
+                <div className="flex items-center gap-1.5">
+                  <Store className="size-4" />
+                  <span>Pickup</span>
+                </div>
+                <span className="mt-1 text-[10px] font-normal text-emerald-600 dark:text-emerald-400">
+                  {!settings.pickupOn ? "Temporarily Off" : "Free pickup"}
+                </span>
+              </button>
+            </div>
           </div>
 
-          {/* Map */}
-          {orderType === "delivery" && (
-            <img
-              src={mapImg}
-              alt="Delivery area map"
-              width={1024}
-              height={640}
-              loading="lazy"
-              className="mt-2.5 h-28 w-full rounded-xl border border-border object-cover"
-            />
+          {/* Mode-specific content */}
+          {orderType === "delivery" ? (
+            <>
+              {/* Delivery Location Section */}
+              <section className="mt-3 rounded-xl border border-border bg-card p-3">
+                <div className="flex items-center justify-between mb-2">
+                  <h2 className="text-xs font-bold text-foreground flex items-center gap-1.5">
+                    <MapPin className="size-3.5 text-primary" />
+                    <span>Delivery Location</span>
+                  </h2>
+                  <span className="text-[10px] text-muted-foreground">
+                    Max radius: {settings.maxRadiusKm} km
+                  </span>
+                </div>
+
+                <LocationPicker
+                  address={address}
+                  onAddressChange={(newAddr) => setAddress(newAddr)}
+                  lat={lat}
+                  lng={lng}
+                  onLocationChange={handleLocationChange}
+                  mapsUrl={mapsUrl}
+                  deliveryNote={deliveryNote}
+                  onDeliveryNoteChange={(n) => setDeliveryNote(n)}
+                  storeLat={settings.storeLat}
+                  storeLng={settings.storeLng}
+                  maxRadiusKm={settings.maxRadiusKm}
+                  routeFactor={settings.routeFactor || 1.3}
+                  savedAddresses={profile.addresses || []}
+                />
+              </section>
+
+              {/* Delivery Fee & ETA Summary */}
+              <div className="mt-3 space-y-1.5 rounded-xl border border-border bg-card p-2.5 text-xs">
+                <div className="flex items-center justify-between">
+                  <span className="text-muted-foreground">Delivery Distance</span>
+                  <span className="font-semibold">~{distance} km from kitchen</span>
+                </div>
+                <div className="flex items-center justify-between">
+                  <span className="text-muted-foreground">Delivery Fee</span>
+                  <span className="font-semibold text-primary">{rupiah(deliveryFee)}</span>
+                </div>
+                <div className="flex items-center justify-between">
+                  <span className="text-muted-foreground flex items-center gap-1">
+                    <Clock className="size-3 text-muted-foreground" />
+                    <span>Estimated Arrival</span>
+                  </span>
+                  <span className="font-semibold">25 - 35 minutes</span>
+                </div>
+              </div>
+
+              {/* Out of Range Alert with quick switch to Pickup */}
+              {outOfRange && (
+                <div className="mt-3 rounded-xl border border-destructive/30 bg-destructive/10 p-3 text-xs text-destructive space-y-2">
+                  <div className="flex items-start gap-2">
+                    <AlertCircle className="size-4 shrink-0 mt-0.5" />
+                    <div>
+                      <span className="font-bold block">Delivery location out of range</span>
+                      <span>
+                        Your location (~{distance} km) exceeds our maximum delivery radius of{" "}
+                        {settings.maxRadiusKm} km.
+                      </span>
+                    </div>
+                  </div>
+                  {settings.pickupOn && (
+                    <button
+                      type="button"
+                      onClick={() => actions.setOrderType("pickup")}
+                      className="w-full py-1.5 px-3 rounded-lg bg-primary text-primary-foreground font-bold text-xs hover:opacity-90 transition"
+                    >
+                      Switch to Kitchen Pickup (Free) &rarr;
+                    </button>
+                  )}
+                </div>
+              )}
+            </>
+          ) : (
+            /* Kitchen Pickup Section */
+            <section className="mt-3 rounded-xl border border-border bg-card p-4 space-y-3">
+              <div className="flex items-center gap-2 text-primary font-bold text-sm">
+                <Store className="size-4.5" />
+                <span>Self-Pickup at Nanami Kitchen</span>
+              </div>
+              <p className="text-xs text-muted-foreground leading-relaxed">
+                Pick up your order hot & fresh directly from our cloud kitchen counter. No delivery
+                fee or GPS location required.
+              </p>
+
+              <div className="rounded-lg bg-secondary/30 p-3 border border-input text-xs space-y-1.5">
+                <div className="font-semibold text-foreground">Nanami Kitchen HQ</div>
+                <div className="text-muted-foreground">Independence Avenue, Windhoek, Namibia</div>
+                <div className="flex items-center gap-3 pt-1 text-[11px]">
+                  <span className="text-emerald-600 dark:text-emerald-400 font-semibold">
+                    ✓ Delivery Fee: N$ 0.00 (Free)
+                  </span>
+                  <span className="text-muted-foreground">⏱ Ready in 15 - 25 mins</span>
+                </div>
+              </div>
+
+              {/* Optional pickup notes */}
+              <div className="space-y-1">
+                <label className="text-xs font-semibold text-foreground">
+                  Pickup Note <span className="text-muted-foreground font-normal">(Optional)</span>
+                </label>
+                <input
+                  type="text"
+                  value={deliveryNote}
+                  onChange={(e) => setDeliveryNote(e.target.value)}
+                  placeholder="e.g. Picking up around 1:30 PM"
+                  className={field}
+                />
+              </div>
+            </section>
           )}
 
-          {storeClosed && (
-            <p className="mt-2 rounded-lg bg-destructive/15 px-2.5 py-1.5 text-[11px] text-destructive font-medium">
-              The store is currently closed. Checkout is disabled.
-            </p>
-          )}
+          {/* Service unavailable alerts & quick switch */}
           {!storeClosed && serviceOff && (
-            <p className="mt-2 rounded-lg bg-destructive/15 px-2.5 py-1.5 text-[11px] text-destructive font-medium">
-              {orderType === "delivery" ? "Delivery" : "Pickup"} service is temporarily unavailable.
-            </p>
+            <div className="mt-3 rounded-xl border border-destructive/30 bg-destructive/10 p-3 text-xs text-destructive space-y-2">
+              <div className="flex items-center gap-2">
+                <AlertCircle className="size-4 shrink-0" />
+                <span>
+                  {orderType === "delivery" ? "Delivery" : "Pickup"} service is temporarily
+                  unavailable.
+                </span>
+              </div>
+              {orderType === "delivery" && settings.pickupOn && (
+                <button
+                  type="button"
+                  onClick={() => actions.setOrderType("pickup")}
+                  className="w-full py-1.5 px-3 rounded-lg bg-primary text-primary-foreground font-bold text-xs hover:opacity-90 transition"
+                >
+                  Switch to Kitchen Pickup instead &rarr;
+                </button>
+              )}
+              {orderType === "pickup" && settings.deliveryOn && (
+                <button
+                  type="button"
+                  onClick={() => actions.setOrderType("delivery")}
+                  className="w-full py-1.5 px-3 rounded-lg bg-primary text-primary-foreground font-bold text-xs hover:opacity-90 transition"
+                >
+                  Switch to Delivery instead &rarr;
+                </button>
+              )}
+            </div>
           )}
+
           {error && (
             <p className="mt-2 rounded-lg bg-destructive/15 px-2.5 py-1.5 text-[11px] text-destructive">
               {error}
             </p>
           )}
+
           <button
             onClick={() => goToStep(1)}
-            disabled={storeClosed || serviceOff}
+            disabled={storeClosed || serviceOff || (orderType === "delivery" && outOfRange)}
             className="mt-3 w-full rounded-xl bg-primary py-2.5 text-xs font-bold text-primary-foreground transition hover:brightness-105 disabled:bg-muted disabled:text-muted-foreground"
           >
-            Continue &rarr;
+            Continue to Payment &rarr;
           </button>
         </>
       )}
@@ -741,6 +867,11 @@ function Checkout() {
                     ? `Delivery Address: ${address}`
                     : "Choice: Takeaway / Pickup"}
                 </li>
+                {orderType === "delivery" && (mapsUrl || lat !== undefined) && (
+                  <li className="line-clamp-1">
+                    Location Pin: {mapsUrl || `https://www.google.com/maps?q=${lat},${lng}`}
+                  </li>
+                )}
                 <li>
                   {cart.length} Item{cart.length !== 1 ? "s" : ""} & selected options
                 </li>
@@ -749,7 +880,14 @@ function Checkout() {
               </ul>
             </div>
 
-            {!valid && (
+            {error && (
+              <div className="mt-4 rounded-xl border border-destructive/30 bg-destructive/10 p-3 text-xs text-destructive flex items-center gap-2">
+                <AlertCircle className="size-4 shrink-0" />
+                <span>{error}</span>
+              </div>
+            )}
+
+            {!valid && !error && (
               <p className="mt-4 rounded-lg bg-destructive/15 px-3 py-2 text-xs text-destructive">
                 {storeClosed
                   ? "The store is currently closed. Checkout is disabled."
@@ -763,11 +901,18 @@ function Checkout() {
               </p>
             )}
             <button
-              disabled={!valid}
+              disabled={!valid || submitting}
               onClick={submit}
-              className="mt-5 w-full rounded-2xl bg-[linear-gradient(135deg,var(--wa),oklch(0.7_0.17_158))] py-4 text-sm font-bold text-wa-foreground shadow-[0_8px_24px_-8px_var(--color-wa)] transition hover:brightness-105 active:scale-[0.99] disabled:bg-muted disabled:text-muted-foreground disabled:shadow-none"
+              className="mt-5 w-full rounded-2xl bg-[linear-gradient(135deg,var(--wa),oklch(0.7_0.17_158))] py-4 text-sm font-bold text-wa-foreground shadow-[0_8px_24px_-8px_var(--color-wa)] transition hover:brightness-105 active:scale-[0.99] disabled:bg-muted disabled:text-muted-foreground disabled:shadow-none flex items-center justify-center gap-2"
             >
-              Send Order via WhatsApp &rarr;
+              {submitting ? (
+                <>
+                  <Loader2 className="size-4.5 animate-spin" />
+                  <span>Submitting Order...</span>
+                </>
+              ) : (
+                <span>Send Order via WhatsApp &rarr;</span>
+              )}
             </button>
           </section>
         </>

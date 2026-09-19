@@ -22,9 +22,9 @@ export const Route = createFileRoute("/saved-address")({
 });
 
 const FALLBACK = [
-  { label: "Home", address: "Jl. Melati No.12, Kec. Sukasari, Jakarta Selatan 1234" },
-  { label: "Office", address: "Jl. Sudirman Kav.45, Kec. Senayan, Jakarta Selatan 12190" },
-  { label: "Other", address: "Jl. Menteng Raya No.88, Jakarta Pusat 10310" },
+  { label: "Home", address: "12 Independence Avenue, Windhoek Central, Windhoek" },
+  { label: "Office", address: "45 Sam Nujoma Drive, Klein Windhoek, Windhoek" },
+  { label: "Other", address: "88 Robert Mugabe Avenue, Windhoek" },
 ];
 
 function labelFor(address: string, index: number) {

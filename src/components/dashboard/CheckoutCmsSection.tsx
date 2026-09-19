@@ -360,9 +360,9 @@ export function CheckoutCmsSection({
                   </label>
                   <input
                     type="text"
-                    value={current.step1Text ?? "1.Transfer to the following account:"}
+                    value={current.step1Text ?? "1. Transfer to the following account:"}
                     onChange={(e) => updateField("step1Text", e.target.value)}
-                    placeholder="1.Transfer to the following account:"
+                    placeholder="1. Transfer to the following account:"
                     className={fieldClass}
                   />
                 </div>

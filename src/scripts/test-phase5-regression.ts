@@ -63,10 +63,10 @@ async function runPhase5Regression() {
     pointsEarned: 1,
     etaMinutes: 35,
     customer: {
-      name: "Budi Santoso",
-      phone: "081234567890",
-      address: "Jl. Sudirman No. 45",
-      deliveryNote: "Lantai 2",
+      name: "David Ndikwetepo",
+      phone: "+264811234567",
+      address: "12 Independence Ave, Windhoek",
+      deliveryNote: "2nd Floor",
     },
   };
 
@@ -108,10 +108,10 @@ async function runPhase5Regression() {
     pointsEarned: 1,
     etaMinutes: 35,
     customer: {
-      name: "Siti Aminah",
-      phone: "081888999000",
-      address: "Jl. Gatot Subroto No. 12",
-      deliveryNote: "Pagar putih",
+      name: "Anna Shipanga",
+      phone: "+264818889900",
+      address: "45 Sam Nujoma Drive, Windhoek",
+      deliveryNote: "White gate",
     },
   };
 

@@ -16,6 +16,7 @@ import {
   UtensilsCrossed,
   Users,
   Image as ImageIcon,
+  MessageSquare,
   PanelLeft,
   PanelLeftClose,
   PanelLeftOpen,
@@ -59,6 +60,7 @@ const OWNER_TOOLS: NavItem[] = [
   { to: "/owner/staff", label: "Accounts & Staff", icon: ShieldCheck },
   { to: "/owner/outlets", label: "Outlets", icon: Store },
   { to: "/owner/shipping", label: "Delivery Rates", icon: Truck },
+  { to: "/owner/whatsapp", label: "WhatsApp Settings", icon: MessageSquare },
   { to: "/owner/settings", label: "Store Settings", icon: Settings },
   { to: "/owner/audit", label: "Activity Logs", icon: ScrollText },
 ];

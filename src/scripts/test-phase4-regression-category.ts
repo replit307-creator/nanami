@@ -52,7 +52,7 @@ async function runCategoryRegressionTest() {
     unitPrice: calc.unitPrice, // Calculated dynamically from base + options
     qty: 2,
     optionLabels: calc.labels, // Resolved option choice names
-    note: "Tolong pisah es",
+    note: "Separate ice please",
   };
 
   const subtotal = calc.unitPrice * cartLine.qty;
@@ -73,10 +73,10 @@ async function runCategoryRegressionTest() {
     pointsEarned: 0,
     etaMinutes: 20,
     customer: {
-      name: "Andi Pratama",
-      phone: "081122334455",
-      address: "Store Pickup",
-      deliveryNote: "Diambil jam 5 sore",
+      name: "Thomas Shaanika",
+      phone: "+264811223344",
+      address: "Kitchen Pickup",
+      deliveryNote: "Pick up at 5 PM",
     },
   };
 

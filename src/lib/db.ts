@@ -198,10 +198,10 @@ export async function syncEnvAccounts() {
             email: process.env["OWNER_EMAIL"].trim().toLowerCase(),
             password: process.env["OWNER_PASSWORD"],
             name: "Nanami Owner",
-            phone: "0834567890",
+            phone: "+264811234567",
             role: "owner",
-            address: "HQ Nanami Kitchen, Jakarta",
-            addresses: ["HQ Nanami Kitchen, Jakarta"],
+            address: "Nanami Kitchen HQ, Independence Ave, Windhoek, Namibia",
+            addresses: ["Nanami Kitchen HQ, Independence Ave, Windhoek, Namibia"],
             points: 1500,
           }
         : null,

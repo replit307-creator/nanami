@@ -58,7 +58,7 @@ function OrderSuccess() {
   }
 
   const targetWa = cleanWhatsappNumber(settings.whatsapp);
-  const waUrl = `https://wa.me/${targetWa}?text=${encodeURIComponent(buildWhatsappMessage(order, settings.currencySymbol))}`;
+  const waUrl = `https://wa.me/${targetWa}?text=${encodeURIComponent(buildWhatsappMessage(order, settings))}`;
 
   return (
     <div className="min-h-screen bg-neutral-950 text-foreground flex justify-center selection:bg-primary selection:text-primary-foreground">

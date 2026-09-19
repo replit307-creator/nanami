@@ -62,7 +62,15 @@ export type Order = {
   paymentMethod: string;
   pointsEarned: number;
   etaMinutes: number;
-  customer: { name: string; phone: string; address: string; deliveryNote: string };
+  customer: {
+    name: string;
+    phone: string;
+    address: string;
+    deliveryNote: string;
+    lat?: number;
+    lng?: number;
+    mapsUrl?: string;
+  };
   accountId?: string | null;
 };
 
@@ -200,6 +208,10 @@ export type Settings = {
   openHours: string;
   pointsPer10k: number;
   adminPassword: string;
+  whatsappTemplate?: string;
+  whatsappHeader?: string;
+  whatsappFooter?: string;
+  whatsappPreset?: "standard" | "compact" | "receipt" | "custom";
 };
 
 export type Profile = {
