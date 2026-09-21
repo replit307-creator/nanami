@@ -115,28 +115,11 @@ export function DashboardShell({
   const displayLogo = cms?.logoUrl || defaultLogo;
   const storeName = settings?.storeName || "Nanami Kitchen";
 
-  const [collapsed, setCollapsed] = useState<boolean>(() => {
-    if (typeof window !== "undefined") {
-      try {
-        return localStorage.getItem("nanami_sidebar_collapsed") === "true";
-      } catch {
-        return false;
-      }
-    }
-    return false;
-  });
+  const [collapsed, setCollapsed] = useState<boolean>(false);
   const [mobileOpen, setMobileOpen] = useState(false);
 
   const toggleSidebar = () => {
-    setCollapsed((prev) => {
-      const next = !prev;
-      try {
-        localStorage.setItem("nanami_sidebar_collapsed", String(next));
-      } catch {
-        // ignore
-      }
-      return next;
-    });
+    setCollapsed((prev) => !prev);
   };
 
   return (

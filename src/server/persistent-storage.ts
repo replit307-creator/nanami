@@ -148,6 +148,14 @@ export function saveOrderStorage(order: Order): void {
   });
 }
 
+export function deleteOrderStorage(id: string): void {
+  const current = getStorageData();
+  persistStorage({
+    ...current,
+    orders: current.orders.filter((o) => o.id !== id),
+  });
+}
+
 export function saveVoucherStorage(v: Voucher): void {
   const current = getStorageData();
   const exists = current.vouchers.some((x) => x.code === v.code);

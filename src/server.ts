@@ -4,6 +4,10 @@ import "./lib/error-capture";
 import { consumeLastCapturedError } from "./lib/error-capture";
 import { renderErrorPage } from "./lib/error-page";
 import { handleApiRequest } from "./server/api-handler";
+import { ensurePostgresService } from "./server/pg-service";
+
+// Ensure PostgreSQL is running on server boot
+ensurePostgresService().catch((err) => console.warn("Background PG ensure error:", err));
 
 type ServerEntry = {
   fetch: (request: Request, env: unknown, ctx: unknown) => Promise<Response> | Response;

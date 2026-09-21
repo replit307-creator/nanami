@@ -116,13 +116,83 @@ export async function handleApiRequest(request: Request): Promise<Response | nul
           source: "postgresql",
           settings: settings[0]?.["data"] ?? fallback.settings,
           cms: cms[0]?.["data"] ?? fallback.cms,
-          menu: menu.length ? menu : fallback.menu,
-          orders: orders.length ? orders : fallback.orders,
-          promos: promos.length ? promos : fallback.promos,
-          vouchers: vouchers.length ? vouchers : fallback.vouchers,
-          accounts: accounts.length ? accounts : fallback.accounts,
-          staff: staff.length ? staff : fallback.staff,
-          mediaAssets: media.length ? media : fallback.mediaAssets,
+          menu: menu.map((m: any) => ({
+            id: m.id,
+            name: m.name,
+            description: m.description,
+            price: Number(m.price),
+            category: m.category,
+            image: m.image,
+            available: m.available,
+            prepMinutes: m.prep_minutes !== undefined ? Number(m.prep_minutes) : 15,
+            badges: Array.isArray(m.badges) ? m.badges : [],
+            stock: m.stock !== null && m.stock !== undefined ? Number(m.stock) : null,
+            groups: Array.isArray(m.groups) ? m.groups : [],
+            specialRequestEnabled:
+              m.special_request_enabled !== undefined ? Boolean(m.special_request_enabled) : true,
+          })),
+          orders: orders.map((o: any) => ({
+            id: o.id,
+            code: o.code,
+            createdAt: Number(o.created_at),
+            type: o.type,
+            lines: o.lines,
+            subtotal: Number(o.subtotal),
+            discount: Number(o.discount),
+            voucherCode: o.voucher_code,
+            deliveryFee: Number(o.delivery_fee),
+            total: Number(o.total),
+            status: o.status,
+            paid: o.paid,
+            paymentMethod: o.payment_method,
+            pointsEarned: o.points_earned,
+            etaMinutes: o.eta_minutes,
+            customer: o.customer,
+            accountId: o.account_id || null,
+          })),
+          promos: promos.map((p: any) => ({
+            id: p.id,
+            title: p.title,
+            subtitle: p.subtitle,
+            badge: p.badge,
+            imageUrl: p.image_url,
+            link: p.link,
+            active: p.active,
+          })),
+          vouchers: vouchers.map((v: any) => ({
+            code: v.code,
+            type: v.type,
+            value: Number(v.value),
+            minSpend: Number(v.min_spend),
+            active: v.active,
+          })),
+          accounts: accounts.map((a: any) => ({
+            id: a.id,
+            email: a.email,
+            password: a.password,
+            name: a.name,
+            phone: a.phone,
+            role: a.role,
+            address: a.address,
+            addresses: a.addresses,
+            points: a.points,
+          })),
+          staff: staff.map((s: any) => ({
+            id: s.id,
+            name: s.name,
+            email: s.email,
+            phone: s.phone,
+            role: s.role,
+            active: s.active,
+            createdAt: Number(s.created_at),
+          })),
+          mediaAssets: media.map((m: any) => ({
+            id: m.id,
+            url: m.url,
+            filename: m.filename,
+            uploadedAt: Number(m.uploaded_at),
+            usedByMenuIds: m.used_by_menu_ids || [],
+          })),
         }),
         { status: 200, headers: corsHeaders },
       );
@@ -138,11 +208,30 @@ export async function handleApiRequest(request: Request): Promise<Response | nul
             headers: corsHeaders,
           });
         }
-        const rows = await sql`SELECT * FROM menu_items ORDER BY category, name`;
-        return new Response(JSON.stringify({ menu: rows.length ? rows : fallback.menu }), {
-          status: 200,
-          headers: corsHeaders,
-        });
+        const rows = (await sql`SELECT * FROM menu_items ORDER BY category, name`) as any[];
+        return new Response(
+          JSON.stringify({
+            menu: rows.map((m: any) => ({
+              id: m.id,
+              name: m.name,
+              description: m.description,
+              price: Number(m.price),
+              category: m.category,
+              image: m.image,
+              available: m.available,
+              prepMinutes: m.prep_minutes !== undefined ? Number(m.prep_minutes) : 15,
+              badges: Array.isArray(m.badges) ? m.badges : [],
+              stock: m.stock !== null && m.stock !== undefined ? Number(m.stock) : null,
+              groups: Array.isArray(m.groups) ? m.groups : [],
+              specialRequestEnabled:
+                m.special_request_enabled !== undefined ? Boolean(m.special_request_enabled) : true,
+            })),
+          }),
+          {
+            status: 200,
+            headers: corsHeaders,
+          },
+        );
       }
 
       if (request.method === "POST" || request.method === "PUT") {

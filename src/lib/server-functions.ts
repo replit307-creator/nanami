@@ -85,7 +85,7 @@ export const loginServerFn = createServerFn({ method: "POST" })
     }
 
     // 2. Check PostgreSQL database
-    const { sql } = await getDb();
+    const { sql, createSessionDb, getSessionProfileDb } = await getDb();
     if (sql) {
       try {
         const rows = (await sql`
@@ -95,19 +95,22 @@ export const loginServerFn = createServerFn({ method: "POST" })
         `) as any[];
         if (rows.length > 0) {
           const a = rows[0];
+          const account = {
+            id: a.id,
+            email: a.email,
+            password: a.password,
+            name: a.name,
+            phone: a.phone,
+            role: (a.role || "user") as "user" | "admin" | "owner" | "staff",
+            address: a.address,
+            addresses: a.addresses || [],
+            points: a.points || 0,
+          };
+          const token = await createSessionDb(account);
           return {
             ok: true,
-            account: {
-              id: a.id,
-              email: a.email,
-              password: a.password,
-              name: a.name,
-              phone: a.phone,
-              role: (a.role || "user") as "user" | "admin" | "owner" | "staff",
-              address: a.address,
-              addresses: a.addresses || [],
-              points: a.points || 0,
-            },
+            account,
+            token,
           };
         }
       } catch (err) {
@@ -121,33 +124,31 @@ export const loginServerFn = createServerFn({ method: "POST" })
       (a) => a.email.toLowerCase() === cleanEmail && a.password === cleanPassword,
     );
     if (seedMatch) {
-      return { ok: true, account: seedMatch as unknown as Account };
+      const account = seedMatch as unknown as Account;
+      const token = await createSessionDb(account);
+      return { ok: true, account, token };
     }
 
     return { ok: false, error: "Invalid email or password." };
   });
 
-export const getDatabaseState = createServerFn({ method: "GET" }).handler(async () => {
-  const envAccounts = getEnvAccounts();
-  const { getStorageData } = await import("../server/persistent-storage");
-  const fallback = getStorageData();
+export const logoutServerFn = createServerFn({ method: "POST" })
+  .validator((data: { token: string }) => data)
+  .handler(async ({ data }) => {
+    const { deleteSessionDb } = await import("./db");
+    await deleteSessionDb(data.token);
+    return { ok: true };
+  });
 
-  const { sql, initDb, seedDbIfEmpty } = await getDb();
-  if (!sql) {
-    const mergedAccounts: Account[] = [...envAccounts];
-    for (const sa of fallback.accounts) {
-      if (!mergedAccounts.some((a) => a.email.toLowerCase() === sa.email.toLowerCase())) {
-        mergedAccounts.push(sa);
-      }
-    }
-    return {
-      ...fallback,
-      accounts: mergedAccounts,
-    };
-  }
-  try {
-    const ok = await initDb();
-    if (!ok) {
+export const getDatabaseState = createServerFn({ method: "POST" })
+  .validator((data?: { sessionToken?: string }) => data)
+  .handler(async ({ data }) => {
+    const envAccounts = getEnvAccounts();
+    const { getStorageData } = await import("../server/persistent-storage");
+    const fallback = getStorageData();
+
+    const { sql, initDb, seedDbIfEmpty, getSessionProfileDb } = await getDb();
+    if (!sql) {
       const mergedAccounts: Account[] = [...envAccounts];
       for (const sa of fallback.accounts) {
         if (!mergedAccounts.some((a) => a.email.toLowerCase() === sa.email.toLowerCase())) {
@@ -157,142 +158,155 @@ export const getDatabaseState = createServerFn({ method: "GET" }).handler(async 
       return {
         ...fallback,
         accounts: mergedAccounts,
+        activeProfile: null,
       };
     }
-
-    // Seed default if database is freshly created and has no records
-    await seedDbIfEmpty(fallback as any);
-
-    const settings =
-      (await sql`SELECT data FROM app_settings WHERE id = 'main_settings' LIMIT 1`) as any[];
-    const cms = (await sql`SELECT data FROM cms_content WHERE id = 'main_cms' LIMIT 1`) as any[];
-    const menu = (await sql`SELECT * FROM menu_items ORDER BY id`) as any[];
-    const orders = (await sql`SELECT * FROM orders ORDER BY created_at DESC`) as any[];
-    const promos = (await sql`SELECT * FROM promos ORDER BY id`) as any[];
-    const vouchers = (await sql`SELECT * FROM vouchers ORDER BY code`) as any[];
-    const accounts = (await sql`SELECT * FROM accounts ORDER BY id`) as any[];
-    const staff = (await sql`SELECT * FROM staff ORDER BY created_at DESC`) as any[];
-    const media = (await sql`SELECT * FROM media_assets ORDER BY uploaded_at DESC`) as any[];
-
-    const mappedAccounts: Account[] = accounts.map((a) => ({
-      id: a.id,
-      email: a.email,
-      password: a.password,
-      name: a.name,
-      phone: a.phone,
-      role: a.role,
-      address: a.address,
-      addresses: a.addresses,
-      points: a.points,
-    }));
-
-    const mergedAccounts: Account[] = [...envAccounts];
-    for (const a of mappedAccounts) {
-      if (!mergedAccounts.some((ea) => ea.email.toLowerCase() === a.email.toLowerCase())) {
-        mergedAccounts.push(a);
+    try {
+      const ok = await initDb();
+      if (!ok) {
+        const mergedAccounts: Account[] = [...envAccounts];
+        for (const sa of fallback.accounts) {
+          if (!mergedAccounts.some((a) => a.email.toLowerCase() === sa.email.toLowerCase())) {
+            mergedAccounts.push(sa);
+          }
+        }
+        return {
+          ...fallback,
+          accounts: mergedAccounts,
+          activeProfile: null,
+        };
       }
-    }
 
-    return {
-      settings: settings[0]?.data ?? fallback.settings,
-      cms: cms[0]?.data ?? fallback.cms,
-      menu: menu.length
-        ? menu.map((m) => ({
-            id: m.id,
-            name: m.name,
-            description: m.description,
-            price: Number(m.price),
-            category: m.category,
-            image: m.image,
-            available: m.available,
-            prepMinutes: m.prep_minutes,
-            badges: m.badges,
-            stock: m.stock,
-            groups: m.groups,
-            specialRequestEnabled:
-              m.special_request_enabled !== undefined ? Boolean(m.special_request_enabled) : true,
-          }))
-        : fallback.menu,
-      orders: orders.length
-        ? orders.map((o) => ({
-            id: o.id,
-            code: o.code,
-            createdAt: Number(o.created_at),
-            type: o.type,
-            lines: o.lines,
-            subtotal: Number(o.subtotal),
-            discount: Number(o.discount),
-            voucherCode: o.voucher_code,
-            deliveryFee: Number(o.delivery_fee),
-            total: Number(o.total),
-            status: o.status,
-            paid: o.paid,
-            paymentMethod: o.payment_method,
-            pointsEarned: o.points_earned,
-            etaMinutes: o.eta_minutes,
-            customer: o.customer,
-            accountId: o.account_id || null,
-          }))
-        : fallback.orders,
-      promos: promos.length
-        ? promos.map((p) => ({
-            id: p.id,
-            title: p.title,
-            subtitle: p.subtitle,
-            badge: p.badge,
-            imageUrl: p.image_url,
-            link: p.link,
-            active: p.active,
-          }))
-        : fallback.promos,
-      vouchers: vouchers.length
-        ? vouchers.map((v) => ({
-            code: v.code,
-            type: v.type,
-            value: Number(v.value),
-            minSpend: Number(v.min_spend),
-            active: v.active,
-          }))
-        : fallback.vouchers,
-      accounts: mergedAccounts,
-      staff: staff.length
-        ? staff.map((s) => ({
-            id: s.id,
-            name: s.name,
-            email: s.email,
-            phone: s.phone,
-            role: s.role,
-            active: s.active,
-            createdAt: Number(s.created_at),
-          }))
-        : fallback.staff,
-      mediaAssets: media.length
-        ? media.map((m) => ({
-            id: m.id,
-            url: m.url,
-            filename: m.filename,
-            uploadedAt: Number(m.uploaded_at),
-            usedByMenuIds: m.used_by_menu_ids || [],
-          }))
-        : fallback.mediaAssets,
-    };
-  } catch (error) {
-    console.warn(
-      "Error fetching state from PostgreSQL database (using persistent storage fallback):",
-      error,
-    );
-    const mergedAccounts: Account[] = [...envAccounts];
-    for (const sa of fallback.accounts) {
-      if (!mergedAccounts.some((a) => a.email.toLowerCase() === sa.email.toLowerCase())) {
-        mergedAccounts.push(sa);
+      // Seed default if database is freshly created and has no records
+      await seedDbIfEmpty(fallback as any);
+
+      const [settings, cms, menu, orders, promos, vouchers, accounts, staff, media] =
+        await Promise.all([
+          sql`SELECT data FROM app_settings WHERE id = 'main_settings' LIMIT 1` as Promise<any[]>,
+          sql`SELECT data FROM cms_content WHERE id = 'main_cms' LIMIT 1` as Promise<any[]>,
+          sql`SELECT * FROM menu_items ORDER BY id` as Promise<any[]>,
+          sql`SELECT * FROM orders ORDER BY created_at DESC` as Promise<any[]>,
+          sql`SELECT * FROM promos ORDER BY id` as Promise<any[]>,
+          sql`SELECT * FROM vouchers ORDER BY code` as Promise<any[]>,
+          sql`SELECT * FROM accounts ORDER BY id` as Promise<any[]>,
+          sql`SELECT * FROM staff ORDER BY created_at DESC` as Promise<any[]>,
+          sql`SELECT * FROM media_assets ORDER BY uploaded_at DESC` as Promise<any[]>,
+        ]);
+
+      let activeProfile = null;
+      if (data?.sessionToken) {
+        activeProfile = await getSessionProfileDb(data.sessionToken);
       }
+
+      const mappedAccounts: Account[] = accounts.map((a) => ({
+        id: a.id,
+        email: a.email,
+        password: a.password,
+        name: a.name,
+        phone: a.phone,
+        role: a.role,
+        address: a.address,
+        addresses: a.addresses,
+        points: a.points,
+      }));
+
+      const mergedAccounts: Account[] = [...envAccounts];
+      for (const a of mappedAccounts) {
+        if (!mergedAccounts.some((ea) => ea.email.toLowerCase() === a.email.toLowerCase())) {
+          mergedAccounts.push(a);
+        }
+      }
+
+      return {
+        settings: settings[0]?.data ?? fallback.settings,
+        cms: cms[0]?.data ?? fallback.cms,
+        menu: menu.map((m) => ({
+          id: m.id,
+          name: m.name,
+          description: m.description,
+          price: Number(m.price),
+          category: m.category,
+          image: m.image,
+          available: m.available,
+          prepMinutes: m.prep_minutes !== undefined ? Number(m.prep_minutes) : 15,
+          badges: Array.isArray(m.badges) ? m.badges : [],
+          stock: m.stock !== null && m.stock !== undefined ? Number(m.stock) : null,
+          groups: Array.isArray(m.groups) ? m.groups : [],
+          specialRequestEnabled:
+            m.special_request_enabled !== undefined ? Boolean(m.special_request_enabled) : true,
+        })),
+        orders: orders.map((o) => ({
+          id: o.id,
+          code: o.code,
+          createdAt: Number(o.created_at),
+          type: o.type,
+          lines: o.lines,
+          subtotal: Number(o.subtotal),
+          discount: Number(o.discount),
+          voucherCode: o.voucher_code,
+          deliveryFee: Number(o.delivery_fee),
+          total: Number(o.total),
+          status: o.status,
+          paid: o.paid,
+          paymentMethod: o.payment_method,
+          pointsEarned: o.points_earned,
+          etaMinutes: o.eta_minutes,
+          customer: o.customer,
+          accountId: o.account_id || null,
+        })),
+        promos: promos.map((p) => ({
+          id: p.id,
+          title: p.title,
+          subtitle: p.subtitle,
+          badge: p.badge,
+          imageUrl: p.image_url,
+          link: p.link,
+          active: p.active,
+        })),
+        vouchers: vouchers.map((v) => ({
+          code: v.code,
+          type: v.type,
+          value: Number(v.value),
+          minSpend: Number(v.min_spend),
+          active: v.active,
+        })),
+        accounts: mergedAccounts,
+        staff: staff.map((s) => ({
+          id: s.id,
+          name: s.name,
+          email: s.email,
+          phone: s.phone,
+          role: s.role,
+          active: s.active,
+          createdAt: Number(s.created_at),
+        })),
+        mediaAssets: media.map((m) => ({
+          id: m.id,
+          url: m.url,
+          filename: m.filename,
+          uploadedAt: Number(m.uploaded_at),
+          usedByMenuIds: m.used_by_menu_ids || [],
+        })),
+        activeProfile,
+      };
+    } catch (error) {
+      console.warn(
+        "Error fetching state from PostgreSQL database (using persistent storage fallback):",
+        error,
+      );
+      const mergedAccounts: Account[] = [...envAccounts];
+      for (const sa of fallback.accounts) {
+        if (!mergedAccounts.some((a) => a.email.toLowerCase() === sa.email.toLowerCase())) {
+          mergedAccounts.push(sa);
+        }
+      }
+      return {
+        ...fallback,
+        accounts: mergedAccounts,
+        activeProfile: null,
+      };
     }
-    return {
-      ...fallback,
-      accounts: mergedAccounts,
-    };
-  }
-});
+  });
 
 export const saveMenuItemDb = createServerFn({ method: "POST" })
   .validator((item: MenuItem) => item)
@@ -313,17 +327,17 @@ export const saveMenuItemDb = createServerFn({ method: "POST" })
         INSERT INTO menu_items (id, name, description, price, category, image, available, prep_minutes, badges, stock, groups, special_request_enabled)
         VALUES (
           ${item.id}, 
-          ${item.name}, 
-          ${item.description}, 
-          ${item.price}, 
-          ${item.category}, 
-          ${item.image}, 
-          ${item.available}, 
-          ${item.prepMinutes}, 
-          ${sql.json(item.badges)}, 
-          ${item.stock ?? null}, 
-          ${sql.json(item.groups)},
-          ${item.specialRequestEnabled !== undefined ? item.specialRequestEnabled : true}
+          ${item.name || ""}, 
+          ${item.description || ""}, 
+          ${Number(item.price) || 0}, 
+          ${item.category || "Meals"}, 
+          ${item.image || ""}, 
+          ${item.available !== false}, 
+          ${Number(item.prepMinutes) || 15}, 
+          ${sql.json(item.badges || [])}, 
+          ${item.stock !== undefined && item.stock !== null ? Number(item.stock) : null}, 
+          ${sql.json(item.groups || [])},
+          ${item.specialRequestEnabled !== false}
         )
         ON CONFLICT (id) DO UPDATE SET
           name = EXCLUDED.name,
@@ -465,6 +479,27 @@ export const saveOrderDb = createServerFn({ method: "POST" })
       return { ok: true, source: "database" };
     } catch (e) {
       console.warn("Failed to save order to PostgreSQL (fallback saved):", e);
+      return { ok: true, source: "storage" };
+    }
+  });
+
+export const deleteOrderDb = createServerFn({ method: "POST" })
+  .validator((id: string) => id)
+  .handler(async ({ data: id }) => {
+    try {
+      const { deleteOrderStorage } = await import("../server/persistent-storage");
+      deleteOrderStorage(id);
+    } catch (err) {
+      console.error("Failed to delete order from local storage:", err);
+    }
+
+    const { sql } = await getDb();
+    if (!sql) return { ok: true, source: "storage" };
+    try {
+      await sql`DELETE FROM orders WHERE id = ${id}`;
+      return { ok: true, source: "database" };
+    } catch (e) {
+      console.warn("Failed to delete order from PostgreSQL (fallback deleted):", e);
       return { ok: true, source: "storage" };
     }
   });
@@ -653,6 +688,27 @@ export const saveStaffDb = createServerFn({ method: "POST" })
       return { ok: true, source: "database" };
     } catch (e) {
       console.warn("Failed to save staff to PostgreSQL (fallback saved):", e);
+      return { ok: true, source: "storage" };
+    }
+  });
+
+export const deleteStaffDb = createServerFn({ method: "POST" })
+  .validator((id: string) => id)
+  .handler(async ({ data: id }) => {
+    try {
+      const { deleteStaffStorage } = await import("../server/persistent-storage");
+      deleteStaffStorage?.(id);
+    } catch (err) {
+      console.error("Failed to delete staff from local storage:", err);
+    }
+
+    const { sql } = await getDb();
+    if (!sql) return { ok: true, source: "storage" };
+    try {
+      await sql`DELETE FROM staff WHERE id = ${id}`;
+      return { ok: true, source: "database" };
+    } catch (e) {
+      console.warn("Failed to delete staff from PostgreSQL (fallback deleted):", e);
       return { ok: true, source: "storage" };
     }
   });

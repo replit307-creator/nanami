@@ -7,9 +7,6 @@ interface BeforeInstallPromptEvent extends Event {
   userChoice: Promise<{ outcome: "accepted" | "dismissed"; platform: string }>;
 }
 
-const STORAGE_KEY_INSTALLED = "nanami_pwa_installed";
-const SESSION_KEY_DISMISSED = "nanami_pwa_prompt_dismissed";
-
 export function InstallPrompt() {
   const [deferredPrompt, setDeferredPrompt] = useState<BeforeInstallPromptEvent | null>(null);
   const [isInstalled, setIsInstalled] = useState<boolean>(true); // start true to prevent flash during SSR/mount
@@ -27,8 +24,7 @@ export function InstallPrompt() {
     const isStandalone =
       window.matchMedia("(display-mode: standalone)").matches ||
       (window.navigator as unknown as { standalone?: boolean }).standalone === true ||
-      document.referrer.includes("android-app://") ||
-      localStorage.getItem(STORAGE_KEY_INSTALLED) === "true";
+      document.referrer.includes("android-app://");
 
     if (isStandalone) {
       setIsInstalled(true);
@@ -36,11 +32,6 @@ export function InstallPrompt() {
     }
 
     setIsInstalled(false);
-
-    // Check if user dismissed for current session
-    if (sessionStorage.getItem(SESSION_KEY_DISMISSED) === "true") {
-      setIsDismissed(true);
-    }
 
     // Detect iOS
     const ua = window.navigator.userAgent.toLowerCase();
@@ -58,7 +49,6 @@ export function InstallPrompt() {
     // 3. Listen to appinstalled event
     const handleAppInstalled = () => {
       setIsInstalled(true);
-      localStorage.setItem(STORAGE_KEY_INSTALLED, "true");
       setDeferredPrompt(null);
       setShowGuide(false);
     };
@@ -84,7 +74,6 @@ export function InstallPrompt() {
 
   const handleDismiss = () => {
     setIsDismissed(true);
-    sessionStorage.setItem(SESSION_KEY_DISMISSED, "true");
   };
 
   const handleInstallClick = async () => {
@@ -94,7 +83,6 @@ export function InstallPrompt() {
         const choice = await deferredPrompt.userChoice;
         if (choice.outcome === "accepted") {
           setIsInstalled(true);
-          localStorage.setItem(STORAGE_KEY_INSTALLED, "true");
           setDeferredPrompt(null);
         }
       } catch (err) {
@@ -108,7 +96,6 @@ export function InstallPrompt() {
 
   const handleMarkAsInstalled = () => {
     setIsInstalled(true);
-    localStorage.setItem(STORAGE_KEY_INSTALLED, "true");
     setShowGuide(false);
   };
 

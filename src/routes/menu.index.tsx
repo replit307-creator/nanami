@@ -45,11 +45,15 @@ function MenuPage() {
   const [q, setQ] = useState("");
   const [searchOpen, setSearchOpen] = useState(false);
 
-  const list = menu.filter(
-    (m) =>
-      (q
-        ? m.name.toLowerCase().includes(q.toLowerCase())
-        : m.category?.toLowerCase() === tab.toLowerCase()) && true,
+  // Ensure active tab matches an existing category
+  const activeTab = categories.some((c) => c.toLowerCase() === tab.toLowerCase())
+    ? tab
+    : categories[0] || tab;
+
+  const list = menu.filter((m) =>
+    q
+      ? m.name.toLowerCase().includes(q.toLowerCase())
+      : m.category?.toLowerCase() === activeTab.toLowerCase(),
   );
 
   return (
@@ -94,7 +98,7 @@ function MenuPage() {
               setQ("");
             }}
             className={`shrink-0 rounded-lg px-3 py-1.5 text-xs font-bold transition ${
-              tab.toLowerCase() === c.toLowerCase() && !q
+              activeTab.toLowerCase() === c.toLowerCase() && !q
                 ? "bg-primary text-primary-foreground shadow-xs"
                 : "border border-border bg-secondary/40 text-muted-foreground hover:text-foreground"
             }`}

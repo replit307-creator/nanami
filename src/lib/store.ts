@@ -28,6 +28,7 @@ import {
   saveMenuItemDb,
   deleteMenuItemDb,
   saveOrderDb,
+  deleteOrderDb,
   saveVoucherDb,
   deleteVoucherDb,
   savePromoDb,
@@ -41,8 +42,11 @@ import {
   updateMediaAssetUsageDb,
   deleteAccountDb,
   loginServerFn,
+  logoutServerFn,
+  deleteStaffDb,
 } from "./server-functions";
 import { formatCurrency, setCurrencySymbol } from "./currency";
+import { getSessionToken, setSessionToken, clearSessionToken } from "./session";
 import { resolveMenuImage, handleImageError } from "./images";
 import {
   cleanWhatsappNumber,
@@ -544,43 +548,11 @@ export function normalizeOrder(o: any): Order {
   };
 }
 
-if (typeof window !== "undefined") {
-  try {
-    const saved = localStorage.getItem("nanami_auth_profile");
-    if (saved) {
-      const parsed = JSON.parse(saved);
-      if (parsed && parsed.signedIn) {
-        defaultState.profile = normalizeProfile(parsed);
-        defaultState.adminUnlocked =
-          parsed.role === "admin" || parsed.role === "owner" || parsed.role === "staff";
-      }
-    }
-    const savedMenu = localStorage.getItem("nanami_catalog_menu");
-    if (savedMenu) {
-      const parsedMenu = JSON.parse(savedMenu);
-      if (Array.isArray(parsedMenu) && parsedMenu.length > 0) {
-        defaultState.menu = parsedMenu.map(normalizeMenuItem);
-      }
-    }
-  } catch (e) {
-    console.debug(e);
-  }
-}
-
 let state: State = defaultState;
 const listeners = new Set<() => void>();
 
 function set(updater: (s: State) => State) {
   state = updater(state);
-  if (typeof window !== "undefined") {
-    try {
-      localStorage.setItem("nanami_auth_profile", JSON.stringify(state.profile));
-      localStorage.setItem("nanami_admin_unlocked", JSON.stringify(state.adminUnlocked));
-      localStorage.setItem("nanami_catalog_menu", JSON.stringify(state.menu));
-    } catch (e) {
-      console.debug(e);
-    }
-  }
   listeners.forEach((l) => l());
 }
 
@@ -626,40 +598,51 @@ export function useStore<T>(selector: (s: State) => T): T {
 }
 
 export const actions = {
+  hydrateState(data: any) {
+    if (!data) return;
+    if (data.settings?.currencySymbol) {
+      setCurrencySymbol(data.settings.currencySymbol);
+    }
+    set((s) => {
+      const effectiveSettings = data.settings ? { ...s.settings, ...data.settings } : s.settings;
+      const resolvedType = resolveOrderType(s.orderType, effectiveSettings) || s.orderType;
+      const profile = data.activeProfile ? normalizeProfile(data.activeProfile) : s.profile;
+      const adminUnlocked = data.activeProfile
+        ? ["admin", "owner", "staff"].includes(data.activeProfile.role)
+        : s.adminUnlocked;
+
+      return {
+        ...s,
+        settings: effectiveSettings,
+        orderType: resolvedType,
+        cms: data.cms
+          ? {
+              ...s.cms,
+              ...data.cms,
+              checkout: {
+                ...defaultCheckoutCms,
+                ...(data.cms.checkout || {}),
+              },
+            }
+          : s.cms,
+        menu: data.menu && data.menu.length ? data.menu.map(normalizeMenuItem) : s.menu,
+        orders: data.orders && data.orders.length ? data.orders.map(normalizeOrder) : s.orders,
+        promos: data.promos && data.promos.length ? data.promos : s.promos,
+        vouchers: data.vouchers && data.vouchers.length ? data.vouchers : s.vouchers,
+        accounts: data.accounts && data.accounts.length ? data.accounts : s.accounts,
+        staff: data.staff && data.staff.length ? data.staff : s.staff,
+        mediaAssets: data.mediaAssets && data.mediaAssets.length ? data.mediaAssets : s.mediaAssets,
+        profile,
+        adminUnlocked,
+      };
+    });
+  },
   async loadServerState() {
     try {
-      const data = await getDatabaseState();
+      const sessionToken = getSessionToken() || undefined;
+      const data = await getDatabaseState({ data: { sessionToken } });
       if (data) {
-        if (data.settings?.currencySymbol) {
-          setCurrencySymbol(data.settings.currencySymbol);
-        }
-        set((s) => {
-          const effectiveSettings = data.settings
-            ? { ...s.settings, ...data.settings }
-            : s.settings;
-          const resolvedType = resolveOrderType(s.orderType, effectiveSettings) || s.orderType;
-          return {
-            ...s,
-            settings: effectiveSettings,
-            orderType: resolvedType,
-            cms: data.cms
-              ? {
-                  ...s.cms,
-                  ...data.cms,
-                  checkout: {
-                    ...defaultCheckoutCms,
-                    ...(data.cms.checkout || {}),
-                  },
-                }
-              : s.cms,
-            menu: data.menu && data.menu.length ? data.menu.map(normalizeMenuItem) : s.menu,
-            orders: data.orders && data.orders.length ? data.orders.map(normalizeOrder) : s.orders,
-            promos: data.promos && data.promos.length ? data.promos : s.promos,
-            vouchers: data.vouchers && data.vouchers.length ? data.vouchers : s.vouchers,
-            accounts: data.accounts && data.accounts.length ? data.accounts : s.accounts,
-            staff: data.staff && data.staff.length ? data.staff : s.staff,
-          };
-        });
+        actions.hydrateState(data);
         console.log("State synchronized from PostgreSQL database successfully.");
       }
     } catch (error) {
@@ -749,77 +732,52 @@ export const actions = {
     password: string,
   ): Promise<{ ok: boolean; error?: string; role?: "user" | "admin" | "owner" | "staff" }> {
     const clean = email.trim().toLowerCase();
-    let account =
-      state.accounts.find((a) => a.email.toLowerCase() === clean && a.password === password) ||
-      DEMO_ACCOUNTS.find((a) => a.email.toLowerCase() === clean && a.password === password);
-
-    if (!account) {
-      try {
-        const res = await loginServerFn({ data: { email: clean, password } });
-        if (res.ok && res.account) {
-          account = res.account;
-          set((s) => ({
-            ...s,
-            accounts: s.accounts.some((a) => a.email.toLowerCase() === clean)
-              ? s.accounts.map((a) => (a.email.toLowerCase() === clean ? account! : a))
-              : [...s.accounts, account!],
-          }));
+    try {
+      const res = await loginServerFn({ data: { email: clean, password } });
+      if (res.ok && res.account) {
+        const account = res.account;
+        const role = account.role ?? "user";
+        if (res.token) {
+          setSessionToken(res.token);
         }
-      } catch (err) {
-        console.warn("Server login fallback error:", err);
+        set((s) => ({
+          ...s,
+          adminUnlocked: role === "admin" || role === "owner" || role === "staff",
+          accounts: s.accounts.some((a) => a.email.toLowerCase() === clean)
+            ? s.accounts.map((a) => (a.email.toLowerCase() === clean ? account : a))
+            : [...s.accounts, account],
+          profile: {
+            ...s.profile,
+            name: account.name,
+            email: account.email,
+            phone: account.phone,
+            role,
+            address: account.address || s.profile.address,
+            addresses:
+              account.addresses && account.addresses.length
+                ? account.addresses
+                : s.profile.addresses,
+            points: account.points !== undefined ? account.points : s.profile.points,
+            signedIn: true,
+            method: "Email",
+          },
+        }));
+        return { ok: true, role };
       }
+      return { ok: false, error: res.error || "Invalid email or password." };
+    } catch (err) {
+      console.warn("Server login error:", err);
+      return { ok: false, error: "Login failed. Please try again." };
     }
-
-    if (!account || account.password !== password)
-      return { ok: false, error: "Invalid email or password." };
-
-    const role = account.role ?? "user";
-    set((s) => ({
-      ...s,
-      adminUnlocked: role === "admin" || role === "owner" || role === "staff",
-      profile: {
-        ...s.profile,
-        name: account!.name,
-        email: account!.email,
-        phone: account!.phone,
-        role,
-        address: account!.address || s.profile.address,
-        addresses:
-          account!.addresses && account!.addresses.length
-            ? account!.addresses
-            : s.profile.addresses,
-        points: account!.points !== undefined ? account!.points : s.profile.points,
-        signedIn: true,
-        method: "Email",
-      },
-    }));
-    return { ok: true, role };
   },
-  loginAsDemo(role: "user" | "admin" | "owner" | "staff"): {
+  async loginAsDemo(role: "user" | "admin" | "owner" | "staff"): Promise<{
     ok: boolean;
     error?: string;
     role?: "user" | "admin" | "owner" | "staff";
-  } {
+  }> {
     const demo = DEMO_ACCOUNTS.find((a) => a.role === role);
     if (!demo) return { ok: false, error: "Demo account not found." };
-    const cleanRole = demo.role ?? role;
-    set((s) => ({
-      ...s,
-      adminUnlocked: cleanRole === "admin" || cleanRole === "owner" || cleanRole === "staff",
-      profile: {
-        ...s.profile,
-        name: demo.name,
-        email: demo.email,
-        phone: demo.phone,
-        role: cleanRole,
-        address: demo.address || s.profile.address,
-        addresses: demo.addresses && demo.addresses.length ? demo.addresses : s.profile.addresses,
-        points: demo.points !== undefined ? demo.points : s.profile.points,
-        signedIn: true,
-        method: "Demo",
-      },
-    }));
-    return { ok: true, role: cleanRole };
+    return await actions.signIn(demo.email, demo.password);
   },
   changePassword(currentPassword: string, newPassword: string): { ok: boolean; error?: string } {
     const email = state.profile.email;
@@ -828,21 +786,20 @@ export const actions = {
       return { ok: false, error: "Current password is incorrect." };
     if (newPassword.length < 6)
       return { ok: false, error: "New password must be at least 6 characters." };
+    const updatedAccount = { ...account, password: newPassword };
     set((s) => ({
       ...s,
-      accounts: s.accounts.map((a) => (a.id === account.id ? { ...a, password: newPassword } : a)),
+      accounts: s.accounts.map((a) => (a.id === account.id ? updatedAccount : a)),
     }));
+    saveAccountDb({ data: updatedAccount }).catch(console.error);
     return { ok: true };
   },
   signOut() {
-    if (typeof window !== "undefined") {
-      try {
-        localStorage.removeItem("nanami_auth_profile");
-        localStorage.removeItem("nanami_admin_unlocked");
-      } catch (e) {
-        console.debug(e);
-      }
+    const token = getSessionToken();
+    if (token) {
+      logoutServerFn({ data: { token } }).catch(console.error);
     }
+    clearSessionToken();
     set((s) => ({ ...s, profile: { ...defaultState.profile }, adminUnlocked: false }));
   },
   unlockAdmin(password: string): boolean {
@@ -1084,6 +1041,10 @@ export const actions = {
       return { ...s, orders: updatedOrders };
     });
   },
+  deleteOrder(id: string) {
+    set((s) => ({ ...s, orders: s.orders.filter((o) => o.id !== id) }));
+    deleteOrderDb({ data: id }).catch(console.error);
+  },
   async saveMenuItem(item: MenuItem) {
     const cleanItem: MenuItem = {
       ...item,
@@ -1215,11 +1176,7 @@ export const actions = {
   },
   deleteStaff(id: string) {
     set((s) => {
-      const staffMember = s.staff.find((x) => x.id === id);
-      if (staffMember) {
-        // Soft delete/mark inactive in database
-        saveStaffDb({ data: { ...staffMember, active: false } }).catch(console.error);
-      }
+      deleteStaffDb({ data: id }).catch(console.error);
       return { ...s, staff: s.staff.filter((x) => x.id !== id) };
     });
   },

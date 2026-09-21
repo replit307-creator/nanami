@@ -9,6 +9,7 @@ import {
 } from "@tanstack/react-router";
 import { useEffect, type ReactNode } from "react";
 import { actions } from "@/lib/store";
+import { getDatabaseState } from "@/lib/server-functions";
 
 import appCss from "../styles.css?url";
 import { reportLovableError } from "../lib/lovable-error-reporting";
@@ -45,13 +46,8 @@ function ErrorComponent({ error, reset }: { error: Error; reset: () => void }) {
 
   const handleClearCache = () => {
     try {
-      if (typeof localStorage !== "undefined") {
-        localStorage.removeItem("nanami_auth_profile");
-        localStorage.removeItem("nanami_catalog_menu");
-        localStorage.removeItem("nanami_admin_unlocked");
-      }
-      if (typeof sessionStorage !== "undefined") {
-        sessionStorage.clear();
+      if (typeof document !== "undefined") {
+        document.cookie = "nanami_session_token=; path=/; max-age=0; SameSite=Lax";
       }
     } catch (e) {
       console.error(e);
@@ -151,6 +147,23 @@ export const Route = createRootRouteWithContext<{ queryClient: QueryClient }>()(
       { rel: "apple-touch-icon", href: "/icon-192.png" },
     ],
   }),
+  loader: async () => {
+    try {
+      let sessionToken: string | undefined = undefined;
+      if (typeof document !== "undefined") {
+        const match = document.cookie.match(/(?:^|; )nanami_session_token=([^;]*)/);
+        sessionToken = match ? decodeURIComponent(match[1]) : undefined;
+      }
+      const data = await getDatabaseState({ data: { sessionToken } });
+      if (data) {
+        actions.hydrateState(data);
+      }
+      return data;
+    } catch (err) {
+      console.warn("Failed to load root database state:", err);
+      return null;
+    }
+  },
   shellComponent: RootShell,
   component: RootComponent,
   notFoundComponent: NotFoundComponent,
@@ -178,10 +191,15 @@ function RootShell({ children }: { children: ReactNode }) {
 
 function RootComponent() {
   const { queryClient } = Route.useRouteContext();
+  const serverState = Route.useLoaderData();
 
   useEffect(() => {
-    actions.loadServerState();
-  }, []);
+    if (serverState) {
+      actions.hydrateState(serverState);
+    } else {
+      actions.loadServerState();
+    }
+  }, [serverState]);
 
   useEffect(() => {
     if (typeof navigator === "undefined" || !("serviceWorker" in navigator)) return;

@@ -42,10 +42,19 @@ export async function initDb(): Promise<boolean> {
 
   initPromise = (async () => {
     try {
-      // Test the connection quickly first with a 2-second timeout
+      if (typeof window === "undefined") {
+        try {
+          const { ensurePostgresService } = await import("../server/pg-service");
+          await ensurePostgresService();
+        } catch (err) {
+          console.debug("Could not ensure postgres service in db.ts:", err);
+        }
+      }
+
+      // Test the connection quickly first with a 3-second timeout
       const pingPromise = sql`SELECT 1`;
       const timeoutPromise = new Promise((_, reject) =>
-        setTimeout(() => reject(new Error("PostgreSQL connection timeout")), 2000),
+        setTimeout(() => reject(new Error("PostgreSQL connection timeout")), 3000),
       );
       await Promise.race([pingPromise, timeoutPromise]);
 
@@ -163,6 +172,17 @@ export async function initDb(): Promise<boolean> {
           role VARCHAR(50) NOT NULL,
           active BOOLEAN NOT NULL DEFAULT TRUE,
           created_at BIGINT NOT NULL
+        )
+      `;
+
+      await sql`
+        CREATE TABLE IF NOT EXISTS user_sessions (
+          id VARCHAR(100) PRIMARY KEY,
+          account_id VARCHAR(50) NOT NULL,
+          email VARCHAR(255) NOT NULL,
+          role VARCHAR(50) NOT NULL,
+          created_at BIGINT NOT NULL,
+          expires_at BIGINT NOT NULL
         )
       `;
 
@@ -368,5 +388,67 @@ export async function seedDbIfEmpty(defaultState: Partial<State>) {
     }
   } catch (error) {
     console.error("Failed to seed database:", error);
+  }
+}
+
+export async function createSessionDb(account: {
+  id: string;
+  email: string;
+  role: string;
+}): Promise<string | null> {
+  if (!sql) return null;
+  try {
+    const token = "sess_" + Math.random().toString(36).substring(2) + Date.now().toString(36);
+    const expiresAt = Date.now() + 30 * 24 * 60 * 60 * 1000; // 30 days
+    await sql`
+      INSERT INTO user_sessions (id, account_id, email, role, created_at, expires_at)
+      VALUES (${token}, ${account.id}, ${account.email}, ${account.role || "user"}, ${Date.now()}, ${expiresAt})
+    `;
+    return token;
+  } catch (err) {
+    console.warn("Failed to create session in PostgreSQL:", err);
+    return null;
+  }
+}
+
+export async function getSessionProfileDb(token: string) {
+  if (!sql || !token) return null;
+  try {
+    const rows = (await sql`
+      SELECT s.id as session_id, s.role, s.email, a.id as account_id, a.name, a.phone, a.address, a.addresses, a.points
+      FROM user_sessions s
+      JOIN accounts a ON a.id = s.account_id
+      WHERE s.id = ${token} AND s.expires_at > ${Date.now()}
+      LIMIT 1
+    `) as any[];
+    if (rows.length > 0) {
+      const r = rows[0];
+      return {
+        signedIn: true,
+        name: r.name,
+        email: r.email,
+        phone: r.phone,
+        role: r.role as "user" | "admin" | "owner" | "staff",
+        address: r.address || "",
+        addresses: Array.isArray(r.addresses) ? r.addresses : [],
+        points: r.points !== undefined ? Number(r.points) : 0,
+        method: "Session",
+      };
+    }
+    return null;
+  } catch (err) {
+    console.warn("Failed to retrieve session from PostgreSQL:", err);
+    return null;
+  }
+}
+
+export async function deleteSessionDb(token: string): Promise<boolean> {
+  if (!sql || !token) return false;
+  try {
+    await sql`DELETE FROM user_sessions WHERE id = ${token}`;
+    return true;
+  } catch (err) {
+    console.warn("Failed to delete session from PostgreSQL:", err);
+    return false;
   }
 }
